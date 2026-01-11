@@ -1968,6 +1968,11 @@ impl Window {
         self.platform_window.set_exclusive_zone(zone);
     }
 
+    /// Set the exclusive edge for layer shell surfaces (Wayland only)
+    pub fn set_exclusive_edge(&self, edge: crate::layer_shell::Anchor) {
+        self.platform_window.set_exclusive_edge(edge);
+    }
+
     /// Returns the client_inset value by [`Self::set_client_inset`].
     pub fn client_inset(&self) -> Option<Pixels> {
         self.client_inset
