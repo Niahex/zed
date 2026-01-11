@@ -30,7 +30,7 @@ use crate::{
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, get_window,
-    layer_shell::LayerShellNotSupportedError, px, size,
+    layer_shell::{Anchor, LayerShellNotSupportedError}, px, size,
 };
 use crate::{
     Capslock,
