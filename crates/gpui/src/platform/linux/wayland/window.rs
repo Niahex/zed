@@ -297,6 +297,12 @@ impl WaylandSurfaceState {
             }
         }
     }
+
+    fn set_exclusive_zone(&self, zone: i32) {
+        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
+            layer_surface.set_exclusive_zone(zone);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1388,6 +1394,12 @@ impl PlatformWindow for WaylandWindow {
             state.client_inset = Some(inset);
             update_window(state);
         }
+    }
+
+    fn set_exclusive_zone(&self, zone: i32) {
+        let state = self.borrow();
+        state.surface_state.set_exclusive_zone(zone);
+        state.surface.commit();
     }
 
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {

@@ -1963,6 +1963,11 @@ impl Window {
         self.platform_window.set_client_inset(inset);
     }
 
+    /// Set the exclusive zone for layer shell surfaces (Wayland only)
+    pub fn set_exclusive_zone(&self, zone: i32) {
+        self.platform_window.set_exclusive_zone(zone);
+    }
+
     /// Returns the client_inset value by [`Self::set_client_inset`].
     pub fn client_inset(&self) -> Option<Pixels> {
         self.client_inset
