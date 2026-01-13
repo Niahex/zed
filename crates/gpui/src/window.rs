@@ -1973,6 +1973,11 @@ impl Window {
         self.platform_window.set_exclusive_edge(edge);
     }
 
+    /// Set the margin for layer shell surfaces (Wayland only)
+    pub fn set_margin(&self, top: i32, right: i32, bottom: i32, left: i32) {
+        self.platform_window.set_margin(top, right, bottom, left);
+    }
+
     /// Returns the client_inset value by [`Self::set_client_inset`].
     pub fn client_inset(&self) -> Option<Pixels> {
         self.client_inset

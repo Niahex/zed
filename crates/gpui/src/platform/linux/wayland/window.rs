@@ -309,6 +309,12 @@ impl WaylandSurfaceState {
             layer_surface.set_exclusive_edge(edge.into());
         }
     }
+
+    fn set_margin(&self, top: i32, right: i32, bottom: i32, left: i32) {
+        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
+            layer_surface.set_margin(top, right, bottom, left);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1411,6 +1417,12 @@ impl PlatformWindow for WaylandWindow {
     fn set_exclusive_edge(&self, edge: Anchor) {
         let state = self.borrow();
         state.surface_state.set_exclusive_edge(edge);
+        state.surface.commit();
+    }
+
+    fn set_margin(&self, top: i32, right: i32, bottom: i32, left: i32) {
+        let state = self.borrow();
+        state.surface_state.set_margin(top, right, bottom, left);
         state.surface.commit();
     }
 
