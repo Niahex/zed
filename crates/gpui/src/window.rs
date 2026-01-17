@@ -1978,6 +1978,11 @@ impl Window {
         self.platform_window.set_margin(top, right, bottom, left);
     }
 
+    /// Set the keyboard interactivity for layer shell surfaces (Wayland only)
+    pub fn set_keyboard_interactivity(&self, interactivity: crate::layer_shell::KeyboardInteractivity) {
+        self.platform_window.set_keyboard_interactivity(interactivity);
+    }
+
     /// Returns the client_inset value by [`Self::set_client_inset`].
     pub fn client_inset(&self) -> Option<Pixels> {
         self.client_inset

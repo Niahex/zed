@@ -575,6 +575,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_exclusive_zone(&self, _zone: i32) {}
     fn set_exclusive_edge(&self, _edge: Anchor) {}
     fn set_margin(&self, _top: i32, _right: i32, _bottom: i32, _left: i32) {}
+    fn set_keyboard_interactivity(&self, _interactivity: crate::layer_shell::KeyboardInteractivity) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);

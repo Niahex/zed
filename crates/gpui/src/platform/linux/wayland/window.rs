@@ -315,6 +315,12 @@ impl WaylandSurfaceState {
             layer_surface.set_margin(top, right, bottom, left);
         }
     }
+
+    fn set_keyboard_interactivity(&self, interactivity: crate::layer_shell::KeyboardInteractivity) {
+        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
+            layer_surface.set_keyboard_interactivity(interactivity.into());
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1423,6 +1429,12 @@ impl PlatformWindow for WaylandWindow {
     fn set_margin(&self, top: i32, right: i32, bottom: i32, left: i32) {
         let state = self.borrow();
         state.surface_state.set_margin(top, right, bottom, left);
+        state.surface.commit();
+    }
+
+    fn set_keyboard_interactivity(&self, interactivity: crate::layer_shell::KeyboardInteractivity) {
+        let state = self.borrow();
+        state.surface_state.set_keyboard_interactivity(interactivity);
         state.surface.commit();
     }
 
