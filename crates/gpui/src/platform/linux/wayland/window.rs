@@ -321,6 +321,12 @@ impl WaylandSurfaceState {
             layer_surface.set_keyboard_interactivity(interactivity.into());
         }
     }
+
+    fn set_layer(&self, layer: crate::layer_shell::Layer) {
+        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
+            layer_surface.set_layer(layer.into());
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1450,6 +1456,12 @@ impl PlatformWindow for WaylandWindow {
         } else {
             state.surface.set_input_region(None);
         }
+        state.surface.commit();
+    }
+
+    fn set_layer(&self, layer: crate::layer_shell::Layer) {
+        let state = self.borrow();
+        state.surface_state.set_layer(layer);
         state.surface.commit();
     }
 

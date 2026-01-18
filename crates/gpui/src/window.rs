@@ -1989,6 +1989,11 @@ impl Window {
         self.platform_window.set_input_region(region);
     }
 
+    /// Set the layer for layer shell surfaces (Wayland only)
+    pub fn set_layer(&self, layer: crate::layer_shell::Layer) {
+        self.platform_window.set_layer(layer);
+    }
+
     /// Returns the client_inset value by [`Self::set_client_inset`].
     pub fn client_inset(&self) -> Option<Pixels> {
         self.client_inset

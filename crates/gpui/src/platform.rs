@@ -577,6 +577,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_margin(&self, _top: i32, _right: i32, _bottom: i32, _left: i32) {}
     fn set_keyboard_interactivity(&self, _interactivity: crate::layer_shell::KeyboardInteractivity) {}
     fn set_input_region(&self, _region: Option<&crate::Bounds<i32>>) {}
+    fn set_layer(&self, _layer: crate::layer_shell::Layer) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
