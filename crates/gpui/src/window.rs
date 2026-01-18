@@ -1983,6 +1983,12 @@ impl Window {
         self.platform_window.set_keyboard_interactivity(interactivity);
     }
 
+    /// Set the input region for layer shell surfaces (Wayland only)
+    /// Pass None to disable all input events, or Some(bounds) to set a specific input region
+    pub fn set_input_region(&self, region: Option<&crate::Bounds<i32>>) {
+        self.platform_window.set_input_region(region);
+    }
+
     /// Returns the client_inset value by [`Self::set_client_inset`].
     pub fn client_inset(&self) -> Option<Pixels> {
         self.client_inset

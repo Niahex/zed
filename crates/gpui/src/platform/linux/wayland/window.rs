@@ -1438,6 +1438,21 @@ impl PlatformWindow for WaylandWindow {
         state.surface.commit();
     }
 
+    fn set_input_region(&self, region: Option<&crate::Bounds<i32>>) {
+        let state = self.borrow();
+        if let Some(bounds) = region {
+            let region = state
+                .globals
+                .compositor
+                .create_region(&state.globals.qh, ());
+            region.add(bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height);
+            state.surface.set_input_region(Some(&region));
+        } else {
+            state.surface.set_input_region(None);
+        }
+        state.surface.commit();
+    }
+
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
         state.client.update_ime_position(bounds);
