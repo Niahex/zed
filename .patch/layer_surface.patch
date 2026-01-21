@@ -1,0 +1,436 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index d177e20503..da1aff033b 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -15253,6 +15253,7 @@ dependencies = [
+  "futures 0.3.31",
+  "gpui",
+  "indoc",
++ "log",
+  "parking_lot",
+  "paths",
+  "schemars",
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index b9822ef704..938afa4d73 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -44,7 +44,7 @@ use crate::{
+     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
+     Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskTiming,
+-    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
++    ThreadTaskTimings, Window, WindowControlArea, hash, layer_shell::Anchor, point, px, size,
+ };
+ use anyhow::Result;
+ use async_task::Runnable;
+@@ -572,6 +572,12 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+         WindowControls::default()
+     }
+     fn set_client_inset(&self, _inset: Pixels) {}
++    fn set_exclusive_zone(&self, _zone: i32) {}
++    fn set_exclusive_edge(&self, _edge: Anchor) {}
++    fn set_margin(&self, _top: i32, _right: i32, _bottom: i32, _left: i32) {}
++    fn set_keyboard_interactivity(&self, _interactivity: crate::layer_shell::KeyboardInteractivity) {}
++    fn set_input_region(&self, _region: Option<&crate::Bounds<i32>>) {}
++    fn set_layer(&self, _layer: crate::layer_shell::Layer) {}
+     fn gpu_specs(&self) -> Option<GpuSpecs>;
+
+     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+diff --git a/crates/gpui/src/platform/linux/wayland/window.rs b/crates/gpui/src/platform/linux/wayland/window.rs
+index 7adaf055d9..c85bff37ba 100644
+--- a/crates/gpui/src/platform/linux/wayland/window.rs
++++ b/crates/gpui/src/platform/linux/wayland/window.rs
+@@ -30,7 +30,7 @@ use crate::{
+     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
+     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
+     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, get_window,
+-    layer_shell::LayerShellNotSupportedError, px, size,
++    layer_shell::{Anchor, LayerShellNotSupportedError}, px, size,
+ };
+ use crate::{
+     Capslock,
+@@ -297,6 +297,36 @@ impl WaylandSurfaceState {
+             }
+         }
+     }
++
++    fn set_exclusive_zone(&self, zone: i32) {
++        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
++            layer_surface.set_exclusive_zone(zone);
++        }
++    }
++
++    fn set_exclusive_edge(&self, edge: Anchor) {
++        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
++            layer_surface.set_exclusive_edge(edge.into());
++        }
++    }
++
++    fn set_margin(&self, top: i32, right: i32, bottom: i32, left: i32) {
++        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
++            layer_surface.set_margin(top, right, bottom, left);
++        }
++    }
++
++    fn set_keyboard_interactivity(&self, interactivity: crate::layer_shell::KeyboardInteractivity) {
++        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
++            layer_surface.set_keyboard_interactivity(interactivity.into());
++        }
++    }
++
++    fn set_layer(&self, layer: crate::layer_shell::Layer) {
++        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) = self {
++            layer_surface.set_layer(layer.into());
++        }
++    }
+ }
+
+ #[derive(Clone)]
+@@ -1390,6 +1420,51 @@ impl PlatformWindow for WaylandWindow {
+         }
+     }
+
++    fn set_exclusive_zone(&self, zone: i32) {
++        let state = self.borrow();
++        state.surface_state.set_exclusive_zone(zone);
++        state.surface.commit();
++    }
++
++    fn set_exclusive_edge(&self, edge: Anchor) {
++        let state = self.borrow();
++        state.surface_state.set_exclusive_edge(edge);
++        state.surface.commit();
++    }
++
++    fn set_margin(&self, top: i32, right: i32, bottom: i32, left: i32) {
++        let state = self.borrow();
++        state.surface_state.set_margin(top, right, bottom, left);
++        state.surface.commit();
++    }
++
++    fn set_keyboard_interactivity(&self, interactivity: crate::layer_shell::KeyboardInteractivity) {
++        let state = self.borrow();
++        state.surface_state.set_keyboard_interactivity(interactivity);
++        state.surface.commit();
++    }
++
++    fn set_input_region(&self, region: Option<&crate::Bounds<i32>>) {
++        let state = self.borrow();
++        if let Some(bounds) = region {
++            let region = state
++                .globals
++                .compositor
++                .create_region(&state.globals.qh, ());
++            region.add(bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height);
++            state.surface.set_input_region(Some(&region));
++        } else {
++            state.surface.set_input_region(None);
++        }
++        state.surface.commit();
++    }
++
++    fn set_layer(&self, layer: crate::layer_shell::Layer) {
++        let state = self.borrow();
++        state.surface_state.set_layer(layer);
++        state.surface.commit();
++    }
++
+     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+         let state = self.borrow();
+         state.client.update_ime_position(bounds);
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 53e10ab227..9f4ec2b9d8 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -1963,6 +1963,37 @@ impl Window {
+         self.platform_window.set_client_inset(inset);
+     }
+
++    /// Set the exclusive zone for layer shell surfaces (Wayland only)
++    pub fn set_exclusive_zone(&self, zone: i32) {
++        self.platform_window.set_exclusive_zone(zone);
++    }
++
++    /// Set the exclusive edge for layer shell surfaces (Wayland only)
++    pub fn set_exclusive_edge(&self, edge: crate::layer_shell::Anchor) {
++        self.platform_window.set_exclusive_edge(edge);
++    }
++
++    /// Set the margin for layer shell surfaces (Wayland only)
++    pub fn set_margin(&self, top: i32, right: i32, bottom: i32, left: i32) {
++        self.platform_window.set_margin(top, right, bottom, left);
++    }
++
++    /// Set the keyboard interactivity for layer shell surfaces (Wayland only)
++    pub fn set_keyboard_interactivity(&self, interactivity: crate::layer_shell::KeyboardInteractivity) {
++        self.platform_window.set_keyboard_interactivity(interactivity);
++    }
++
++    /// Set the input region for layer shell surfaces (Wayland only)
++    /// Pass None to disable all input events, or Some(bounds) to set a specific input region
++    pub fn set_input_region(&self, region: Option<&crate::Bounds<i32>>) {
++        self.platform_window.set_input_region(region);
++    }
++
++    /// Set the layer for layer shell surfaces (Wayland only)
++    pub fn set_layer(&self, layer: crate::layer_shell::Layer) {
++        self.platform_window.set_layer(layer);
++    }
++
+     /// Returns the client_inset value by [`Self::set_client_inset`].
+     pub fn client_inset(&self) -> Option<Pixels> {
+         self.client_inset
+diff --git a/crates/project/src/trusted_worktrees.rs b/crates/project/src/trusted_worktrees.rs
+index 618aef653e..f0b963c2b1 100644
+--- a/crates/project/src/trusted_worktrees.rs
++++ b/crates/project/src/trusted_worktrees.rs
+@@ -11,7 +11,7 @@
+ //! Unless `trust_all_worktrees` auto trust is enabled, does not trust anything that was not persisted before.
+ //! When dealing with "restricted" and other related concepts in the API, it means all explicitly restricted, after any of the [`TrustedWorktreesStore::can_trust`] and [`TrustedWorktreesStore::can_trust_global`] calls.
+ //!
+-//!
++//! Zed does not consider invisible, `worktree.is_visible() == false` worktrees in Zed, as those are programmatically created inside Zed for internal needs, e.g. a tmp dir for `keymap_editor.rs` needs.
+ //!
+ //!
+ //! Path rust hierarchy.
+@@ -474,6 +474,12 @@ impl TrustedWorktreesStore {
+             return false;
+         };
+         let worktree_path = worktree.read(cx).abs_path();
++        // Zed opened an "internal" directory: e.g. a tmp dir for `keymap_editor.rs` needs.
++        if !worktree.read(cx).is_visible() {
++            log::debug!("Skipping worktree trust checks for not visible {worktree_path:?}");
++            return true;
++        }
++
+         let is_file = worktree.read(cx).is_single_file();
+         if self
+             .restricted
+@@ -491,30 +497,35 @@ impl TrustedWorktreesStore {
+             return true;
+         }
+
++        // * Single files are auto-approved when something else (not a single file) was approved on this host already.
++        // * If parent path is trusted already, this worktree is stusted also.
++        //
+         // See module documentation for details on trust level.
+-        if is_file && self.trusted_paths.contains_key(&weak_worktree_store) {
+-            return true;
+-        }
+-
+-        let parent_path_trusted =
+-            self.trusted_paths
+-                .get(&weak_worktree_store)
+-                .is_some_and(|trusted_paths| {
+-                    trusted_paths.iter().any(|trusted_path| {
+-                        let PathTrust::AbsPath(trusted_path) = trusted_path else {
+-                            return false;
+-                        };
+-                        worktree_path.starts_with(trusted_path)
+-                    })
+-                });
+-        if parent_path_trusted {
+-            return true;
++        if let Some(trusted_paths) = self.trusted_paths.get(&weak_worktree_store) {
++            let auto_trusted = worktree_store.read_with(cx, |worktree_store, cx| {
++                trusted_paths.iter().any(|trusted_path| match trusted_path {
++                    PathTrust::Worktree(worktree_id) => worktree_store
++                        .worktree_for_id(*worktree_id, cx)
++                        .is_some_and(|worktree| {
++                            let worktree = worktree.read(cx);
++                            worktree_path.starts_with(&worktree.abs_path())
++                                || (is_file && !worktree.is_single_file())
++                        }),
++                    PathTrust::AbsPath(trusted_path) => {
++                        is_file || worktree_path.starts_with(trusted_path)
++                    }
++                })
++            });
++            if auto_trusted {
++                return true;
++            }
+         }
+
+         self.restricted
+             .entry(weak_worktree_store.clone())
+             .or_default()
+             .insert(worktree_id);
++        log::info!("Worktree {worktree_path:?} is not trusted");
+         cx.emit(TrustedWorktreesEvent::Restricted(
+             weak_worktree_store,
+             HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+@@ -1545,4 +1556,106 @@ mod tests {
+             "local worktree should be trusted on local host"
+         );
+     }
++
++    #[gpui::test]
++    async fn test_invisible_worktree_stores_do_not_affect_trust(cx: &mut TestAppContext) {
++        init_test(cx);
++
++        let fs = FakeFs::new(cx.executor());
++        fs.insert_tree(
++            path!("/"),
++            json!({
++                "visible": { "main.rs": "fn main() {}" },
++                "other": { "a.rs": "fn other() {}" },
++                "invisible": { "b.rs": "fn invisible() {}" }
++            }),
++        )
++        .await;
++
++        let project = Project::test(fs, [path!("/visible").as_ref()], cx).await;
++        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
++        let visible_worktree_id = worktree_store.read_with(cx, |store, cx| {
++            store
++                .worktrees()
++                .find(|worktree| worktree.read(cx).root_dir().unwrap().ends_with("visible"))
++                .expect("visible worktree")
++                .read(cx)
++                .id()
++        });
++        let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
++
++        let events: Rc<RefCell<Vec<TrustedWorktreesEvent>>> = Rc::default();
++        cx.update({
++            let events = events.clone();
++            |cx| {
++                cx.subscribe(&trusted_worktrees, move |_, event, _| {
++                    events.borrow_mut().push(match event {
++                        TrustedWorktreesEvent::Trusted(host, paths) => {
++                            TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
++                        }
++                        TrustedWorktreesEvent::Restricted(host, paths) => {
++                            TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
++                        }
++                    });
++                })
++            }
++        })
++        .detach();
++
++        assert!(
++            !trusted_worktrees.update(cx, |store, cx| {
++                store.can_trust(&worktree_store, visible_worktree_id, cx)
++            }),
++            "visible worktree should be restricted initially"
++        );
++        assert_eq!(
++            HashSet::from_iter([(visible_worktree_id)]),
++            trusted_worktrees.read_with(cx, |store, _| {
++                store
++                    .restricted
++                    .get(&worktree_store.downgrade())
++                    .unwrap()
++                    .clone()
++            }),
++            "only visible worktree should be restricted",
++        );
++
++        let (new_visible_worktree, new_invisible_worktree) =
++            worktree_store.update(cx, |worktree_store, cx| {
++                let new_visible_worktree = worktree_store.create_worktree("/other", true, cx);
++                let new_invisible_worktree =
++                    worktree_store.create_worktree("/invisible", false, cx);
++                (new_visible_worktree, new_invisible_worktree)
++            });
++        let (new_visible_worktree, new_invisible_worktree) = (
++            new_visible_worktree.await.unwrap(),
++            new_invisible_worktree.await.unwrap(),
++        );
++
++        let new_visible_worktree_id =
++            new_visible_worktree.read_with(cx, |new_visible_worktree, _| new_visible_worktree.id());
++        assert!(
++            !trusted_worktrees.update(cx, |store, cx| {
++                store.can_trust(&worktree_store, new_visible_worktree_id, cx)
++            }),
++            "new visible worktree should be restricted initially",
++        );
++        assert!(
++            trusted_worktrees.update(cx, |store, cx| {
++                store.can_trust(&worktree_store, new_invisible_worktree.read(cx).id(), cx)
++            }),
++            "invisible worktree should be skipped",
++        );
++        assert_eq!(
++            HashSet::from_iter([visible_worktree_id, new_visible_worktree_id]),
++            trusted_worktrees.read_with(cx, |store, _| {
++                store
++                    .restricted
++                    .get(&worktree_store.downgrade())
++                    .unwrap()
++                    .clone()
++            }),
++            "only visible worktrees should be restricted"
++        );
++    }
+ }
+diff --git a/crates/snippet_provider/Cargo.toml b/crates/snippet_provider/Cargo.toml
+index c1f04117d4..e59a566268 100644
+--- a/crates/snippet_provider/Cargo.toml
++++ b/crates/snippet_provider/Cargo.toml
+@@ -18,6 +18,7 @@ extension.workspace = true
+ fs.workspace = true
+ futures.workspace = true
+ gpui.workspace = true
++log.workspace = true
+ parking_lot.workspace = true
+ paths.workspace = true
+ serde.workspace = true
+diff --git a/crates/snippet_provider/src/lib.rs b/crates/snippet_provider/src/lib.rs
+index 5eff6c917f..8254844ea8 100644
+--- a/crates/snippet_provider/src/lib.rs
++++ b/crates/snippet_provider/src/lib.rs
+@@ -15,7 +15,6 @@ use fs::Fs;
+ use futures::stream::StreamExt;
+ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
+ pub use registry::*;
+-use util::ResultExt;
+
+ pub fn init(cx: &mut App) {
+     SnippetRegistry::init_global(cx);
+@@ -32,7 +31,7 @@ fn file_stem_to_key(stem: &str) -> SnippetKind {
+     }
+ }
+
+-fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
++fn file_to_snippets(file_contents: VsSnippetsFile, source: &Path) -> Vec<Arc<Snippet>> {
+     let mut snippets = vec![];
+     for (name, snippet) in file_contents.snippets {
+         let snippet_name = name.clone();
+@@ -43,9 +42,10 @@ fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
+             .description
+             .map(|description| description.to_string());
+         let body = snippet.body.to_string();
+-        if snippet::Snippet::parse(&body).log_err().is_none() {
++        if let Err(e) = snippet::Snippet::parse(&body) {
++            log::error!("Invalid snippet name '{name}' in {source:?}: {e:#}");
+             continue;
+-        };
++        }
+         snippets.push(Arc::new(Snippet {
+             body,
+             prefix: prefixes,
+@@ -105,7 +105,7 @@ async fn process_updates(
+                 else {
+                     return;
+                 };
+-                let snippets = file_to_snippets(as_json);
++                let snippets = file_to_snippets(as_json, entry_path.as_path());
+                 *snippets_of_kind.entry(entry_path).or_default() = snippets;
+             } else {
+                 snippets_of_kind.remove(&entry_path);
+diff --git a/crates/snippet_provider/src/registry.rs b/crates/snippet_provider/src/registry.rs
+index 65850d650e..a33e45b66a 100644
+--- a/crates/snippet_provider/src/registry.rs
++++ b/crates/snippet_provider/src/registry.rs
+@@ -42,7 +42,7 @@ impl SnippetRegistry {
+         let kind = file_path
+             .file_stem()
+             .and_then(|stem| stem.to_str().and_then(file_stem_to_key));
+-        let snippets = crate::file_to_snippets(snippets_in_file);
++        let snippets = crate::file_to_snippets(snippets_in_file, file_path);
+         self.snippets.write().insert(kind, snippets);
+
+         Ok(())
