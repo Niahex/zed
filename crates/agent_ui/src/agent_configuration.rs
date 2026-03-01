@@ -8,6 +8,7 @@ use std::{ops::Range, sync::Arc};
 
 use agent::ContextServerRegistry;
 use anyhow::Result;
+use client::zed_urls;
 use cloud_api_types::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -19,7 +20,6 @@ use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, Subscription, Task, WeakEntity,
 };
-use itertools::Itertools;
 use language::LanguageRegistry;
 use language_model::{
     IconOrSvg, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
@@ -28,7 +28,10 @@ use language_model::{
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{AgentServerStore, ExternalAgentServerName, ExternalAgentSource},
+    agent_server_store::{
+        AgentServerStore, CLAUDE_AGENT_NAME, CODEX_NAME, ExternalAgentServerName,
+        ExternalAgentSource, GEMINI_NAME,
+    },
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -938,6 +941,9 @@ impl AgentConfiguration {
 
         let user_defined_agents = agent_server_store
             .external_agents()
+            .filter(|name| {
+                name.0 != GEMINI_NAME && name.0 != CLAUDE_AGENT_NAME && name.0 != CODEX_NAME
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -955,7 +961,6 @@ impl AgentConfiguration {
                 let source = agent_server_store.agent_source(&name).unwrap_or_default();
                 (name, icon, display_name, source)
             })
-            .sorted_unstable_by_key(|(_, _, display_name, _)| display_name.to_lowercase())
             .collect();
 
         let add_agent_popover = PopoverMenu::new("add-agent-server-popover")
@@ -978,7 +983,7 @@ impl AgentConfiguration {
                         })
                         .entry("Add Custom Agent", None, {
                             move |window, cx| {
-                                if let Some(workspace) = Workspace::for_window(window, cx) {
+                                if let Some(workspace) = window.root().flatten() {
                                     let workspace = workspace.downgrade();
                                     window
                                         .spawn(cx, async |cx| {
@@ -993,6 +998,22 @@ impl AgentConfiguration {
                         })
                         .separator()
                         .header("Learn More")
+                        .item(
+                            ContextMenuEntry::new("Agent Servers Docs")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::End)
+                                .handler({
+                                    move |window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenBrowser {
+                                                url: zed_urls::agent_server_docs(cx),
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                }),
+                        )
                         .item(
                             ContextMenuEntry::new("ACP Docs")
                                 .icon(IconName::ArrowUpRight)
@@ -1028,24 +1049,51 @@ impl AgentConfiguration {
                         "All agents connected through the Agent Client Protocol.",
                         add_agent_popover.into_any_element(),
                     ))
-                    .child(v_flex().p_4().pt_0().gap_2().map(|mut parent| {
-                        let mut first = true;
-                        for (name, icon, display_name, source) in user_defined_agents {
-                            if !first {
-                                parent = parent
-                                    .child(Divider::horizontal().color(DividerColor::BorderFaded));
-                            }
-                            first = false;
-                            parent = parent.child(self.render_agent_server(
-                                icon,
-                                name,
-                                display_name,
-                                source,
+                    .child(
+                        v_flex()
+                            .p_4()
+                            .pt_0()
+                            .gap_2()
+                            .child(self.render_agent_server(
+                                AgentIcon::Name(IconName::AiClaude),
+                                "Claude Agent",
+                                "Claude Agent",
+                                ExternalAgentSource::Builtin,
                                 cx,
-                            ));
-                        }
-                        parent
-                    })),
+                            ))
+                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                            .child(self.render_agent_server(
+                                AgentIcon::Name(IconName::AiOpenAi),
+                                "Codex CLI",
+                                "Codex CLI",
+                                ExternalAgentSource::Builtin,
+                                cx,
+                            ))
+                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                            .child(self.render_agent_server(
+                                AgentIcon::Name(IconName::AiGemini),
+                                "Gemini CLI",
+                                "Gemini CLI",
+                                ExternalAgentSource::Builtin,
+                                cx,
+                            ))
+                            .map(|mut parent| {
+                                for (name, icon, display_name, source) in user_defined_agents {
+                                    parent = parent
+                                        .child(
+                                            Divider::horizontal().color(DividerColor::BorderFaded),
+                                        )
+                                        .child(self.render_agent_server(
+                                            icon,
+                                            name,
+                                            display_name,
+                                            source,
+                                            cx,
+                                        ));
+                                }
+                                parent
+                            }),
+                    ),
             )
     }
 
@@ -1086,7 +1134,7 @@ impl AgentConfiguration {
                 )),
                 IconName::AcpRegistry,
             )),
-            ExternalAgentSource::Custom => None,
+            ExternalAgentSource::Builtin | ExternalAgentSource::Custom => None,
         };
 
         let agent_server_name = ExternalAgentServerName(id.clone());
@@ -1128,46 +1176,19 @@ impl AgentConfiguration {
                             let Some(agent_servers) = settings.agent_servers.as_mut() else {
                                 return;
                             };
-                            if let Some(entry) = agent_servers.get(agent_name.0.as_ref())
+                            if let Some(entry) = agent_servers.custom.get(agent_name.0.as_ref())
                                 && matches!(
                                     entry,
                                     settings::CustomAgentServerSettings::Registry { .. }
                                 )
                             {
-                                agent_servers.remove(agent_name.0.as_ref());
+                                agent_servers.custom.remove(agent_name.0.as_ref());
                             }
                         });
                     })),
                 )
             }
-            ExternalAgentSource::Custom => {
-                let fs = self.fs.clone();
-                Some(
-                    IconButton::new(
-                        SharedString::from(format!("uninstall-{}", id)),
-                        IconName::Trash,
-                    )
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Remove Custom Agent"))
-                    .on_click(cx.listener(move |_, _, _window, cx| {
-                        let agent_name = agent_server_name.clone();
-                        update_settings_file(fs.clone(), cx, move |settings, _| {
-                            let Some(agent_servers) = settings.agent_servers.as_mut() else {
-                                return;
-                            };
-                            if let Some(entry) = agent_servers.get(agent_name.0.as_ref())
-                                && matches!(
-                                    entry,
-                                    settings::CustomAgentServerSettings::Custom { .. }
-                                )
-                            {
-                                agent_servers.remove(agent_name.0.as_ref());
-                            }
-                        });
-                    })),
-                )
-            }
+            ExternalAgentSource::Builtin | ExternalAgentSource::Custom => None,
         };
 
         h_flex()
@@ -1346,23 +1367,29 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                         !settings
                             .agent_servers
                             .as_ref()
-                            .is_some_and(|agent_servers| agent_servers.contains_key(name.as_str()))
+                            .is_some_and(|agent_servers| {
+                                agent_servers.custom.contains_key(name.as_str())
+                            })
                     });
                 if let Some(server_name) = server_name {
                     unique_server_name = Some(SharedString::from(server_name.clone()));
-                    settings.agent_servers.get_or_insert_default().insert(
-                        server_name,
-                        settings::CustomAgentServerSettings::Custom {
-                            path: "path_to_executable".into(),
-                            args: vec![],
-                            env: HashMap::default(),
-                            default_mode: None,
-                            default_model: None,
-                            favorite_models: vec![],
-                            default_config_options: Default::default(),
-                            favorite_config_option_values: Default::default(),
-                        },
-                    );
+                    settings
+                        .agent_servers
+                        .get_or_insert_default()
+                        .custom
+                        .insert(
+                            server_name,
+                            settings::CustomAgentServerSettings::Custom {
+                                path: "path_to_executable".into(),
+                                args: vec![],
+                                env: HashMap::default(),
+                                default_mode: None,
+                                default_model: None,
+                                favorite_models: vec![],
+                                default_config_options: Default::default(),
+                                favorite_config_option_values: Default::default(),
+                            },
+                        );
                 }
             });
 

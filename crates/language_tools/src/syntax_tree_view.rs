@@ -484,7 +484,7 @@ impl SyntaxTreeView {
         ranges: &[Range<Anchor>],
         cx: &mut Context<Editor>,
     ) {
-        editor.highlight_background(
+        editor.highlight_background_key(
             HighlightKey::SyntaxTreeView(key),
             ranges,
             |_, theme| theme.colors().editor_document_highlight_write_background,

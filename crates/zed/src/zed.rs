@@ -376,19 +376,8 @@ pub fn initialize_workspace(
             return;
         };
         let multi_workspace_handle = cx.entity();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
+        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, window, cx));
         multi_workspace.register_sidebar(sidebar, window, cx);
-
-        let multi_workspace_handle = multi_workspace_handle.downgrade();
-        window.on_window_should_close(cx, move |window, cx| {
-            multi_workspace_handle
-                .update(cx, |multi_workspace, cx| {
-                    // We'll handle closing asynchronously
-                    multi_workspace.close_window(&CloseWindow, window, cx);
-                    false
-                })
-                .unwrap_or(true)
-        });
     })
     .detach();
 
@@ -494,6 +483,17 @@ pub fn initialize_workspace(
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
+        });
+
+        let handle = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            handle
+                .update(cx, |workspace, cx| {
+                    // We'll handle closing asynchronously
+                    workspace.close_window(&CloseWindow, window, cx);
+                    false
+                })
+                .unwrap_or(true)
         });
 
         initialize_panels(prompt_builder.clone(), window, cx);
@@ -796,33 +796,36 @@ fn register_actions(
         })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
-            workspace::prompt_for_open_path_and_open(
-                workspace,
-                workspace.app_state().clone(),
+            let paths = workspace.prompt_for_open_path(
                 PathPromptOptions {
                     files: true,
                     directories: true,
                     multiple: true,
                     prompt: None,
                 },
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                ),
                 window,
                 cx,
             );
-        })
-        .register_action(|workspace, _: &workspace::OpenFiles, window, cx| {
-            let directories = cx.can_select_mixed_files_and_dirs();
-            workspace::prompt_for_open_path_and_open(
-                workspace,
-                workspace.app_state().clone(),
-                PathPromptOptions {
-                    files: true,
-                    directories,
-                    multiple: true,
-                    prompt: None,
-                },
-                window,
-                cx,
-            );
+
+            cx.spawn_in(window, async move |this, cx| {
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+
+                if let Some(task) = this
+                    .update_in(cx, |this, window, cx| {
+                        this.open_workspace_for_paths(false, paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+            })
+            .detach()
         })
         .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
             if !action.from_existing_connection {
@@ -1319,8 +1322,7 @@ fn quit(_: &Quit, cx: &mut App) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for window in &workspace_windows {
-            let window = *window;
+        for window in workspace_windows {
             let workspaces = window
                 .update(cx, |multi_workspace, _, _| {
                     multi_workspace.workspaces().to_vec()
@@ -1348,24 +1350,6 @@ fn quit(_: &Quit, cx: &mut App) {
                 }
             }
         }
-        // Flush all pending workspace serialization before quitting so that
-        // session_id/window_id are up-to-date in the database.
-        let mut flush_tasks = Vec::new();
-        for window in &workspace_windows {
-            window
-                .update(cx, |multi_workspace, window, cx| {
-                    for workspace in multi_workspace.workspaces() {
-                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
-                            workspace.flush_serialization(window, cx)
-                        }));
-                    }
-                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
-                    flush_tasks.push(multi_workspace.flush_serialization());
-                })
-                .log_err();
-        }
-        futures::future::join_all(flush_tasks).await;
-
         cx.update(|cx| cx.quit());
         anyhow::Ok(())
     })
@@ -2060,39 +2044,40 @@ fn open_settings_file(
     cx: &mut Context<Workspace>,
 ) {
     cx.spawn_in(window, async move |workspace, cx| {
-        let (worktree_creation_task, settings_open_task) = workspace
+        let settings_open_task = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.with_local_or_wsl_workspace(window, cx, move |workspace, window, cx| {
-                    let project = workspace.project().clone();
+                workspace.with_local_workspace(window, cx, move |_workspace, window, cx| {
+                    cx.spawn_in(window, async move |workspace, cx| {
+                        let worktree_creation_task =
+                            workspace.update_in(cx, |workspace, _window, cx| {
+                                workspace.project().update(cx, |project, cx| {
+                                    // Set up a dedicated worktree for settings, since
+                                    // otherwise we're dropping and re-starting LSP servers
+                                    // for each file inside on every settings file
+                                    // close/open
 
-                    let worktree_creation_task = cx.spawn_in(window, async move |_, cx| {
-                        let config_dir = project
-                            .update(cx, |project, cx| {
-                                project.try_windows_path_to_wsl(paths::config_dir().as_path(), cx)
-                            })
-                            .await?;
-                        // Set up a dedicated worktree for settings, since
-                        // otherwise we're dropping and re-starting LSP servers
-                        // for each file inside on every settings file
-                        // close/open
-
-                        // TODO: Do note that all other external files (e.g.
-                        // drag and drop from OS) still have their worktrees
-                        // released on file close, causing LSP servers'
-                        // restarts.
-                        project
-                            .update(cx, |project, cx| {
-                                project.find_or_create_worktree(&config_dir, false, cx)
-                            })
-                            .await
-                    });
-                    let settings_open_task =
-                        create_and_open_local_file(abs_path, window, cx, default_content);
-                    (worktree_creation_task, settings_open_task)
+                                    // TODO: Do note that all other external files (e.g.
+                                    // drag and drop from OS) still have their worktrees
+                                    // released on file close, causing LSP servers'
+                                    // restarts.
+                                    project.find_or_create_worktree(
+                                        paths::config_dir().as_path(),
+                                        false,
+                                        cx,
+                                    )
+                                })
+                            })?;
+                        let _ = worktree_creation_task.await?;
+                        let settings_open_task =
+                            workspace.update_in(cx, |_workspace, window, cx| {
+                                create_and_open_local_file(abs_path, window, cx, default_content)
+                            })?;
+                        let _ = settings_open_task.await?;
+                        anyhow::Ok(())
+                    })
                 })
             })?
             .await?;
-        let _ = worktree_creation_task.await?;
         let _ = settings_open_task.await?;
         anyhow::Ok(())
     })
@@ -2778,7 +2763,6 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 0);
     }
 
-    #[ignore = "This test has timing issues across platforms."]
     #[gpui::test]
     async fn test_window_edit_state_restoring_enabled(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
@@ -3665,7 +3649,7 @@ mod tests {
                             .language_at(MultiBufferOffset(0), cx)
                             .unwrap()
                             .name(),
-                        "Rust"
+                        "Rust".into()
                     );
                 });
             })
@@ -3813,7 +3797,7 @@ mod tests {
                             .language_at(MultiBufferOffset(0), cx)
                             .unwrap()
                             .name(),
-                        "Rust"
+                        "Rust".into()
                     )
                 });
             })

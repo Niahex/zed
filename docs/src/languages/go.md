@@ -46,7 +46,7 @@ If `gopls` is not found you will likely need to add `export PATH="$PATH:$HOME/go
 
 Zed sets the following initialization options for inlay hints:
 
-```json
+```json [settings]
 "hints": {
     "assignVariableTypes": true,
     "compositeLiteralFields": true,
@@ -62,7 +62,7 @@ to make the language server send back inlay hints when Zed has them enabled in t
 
 Use
 
-```json
+```json [settings]
 "lsp": {
     "gopls": {
         "initialization_options": {

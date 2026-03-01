@@ -5,15 +5,6 @@ use crate::{
 
 use gpui::{AnyView, ClickEvent, SharedString};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AgentThreadStatus {
-    #[default]
-    Completed,
-    Running,
-    WaitingForConfirmation,
-    Error,
-}
-
 #[derive(IntoElement, RegisterComponent)]
 pub struct ThreadItem {
     id: ElementId,
@@ -22,7 +13,6 @@ pub struct ThreadItem {
     timestamp: SharedString,
     running: bool,
     generation_done: bool,
-    status: AgentThreadStatus,
     selected: bool,
     hovered: bool,
     added: Option<usize>,
@@ -45,7 +35,6 @@ impl ThreadItem {
             timestamp: "".into(),
             running: false,
             generation_done: false,
-            status: AgentThreadStatus::default(),
             selected: false,
             hovered: false,
             added: None,
@@ -77,11 +66,6 @@ impl ThreadItem {
 
     pub fn generation_done(mut self, generation_done: bool) -> Self {
         self.generation_done = generation_done;
-        self
-    }
-
-    pub fn status(mut self, status: AgentThreadStatus) -> Self {
-        self.status = status;
         self
     }
 
@@ -159,51 +143,22 @@ impl RenderOnce for ThreadItem {
             .color(Color::Muted)
             .size(IconSize::Small);
 
-        let decoration = if self.status == AgentThreadStatus::WaitingForConfirmation {
-            Some(
-                IconDecoration::new(
-                    IconDecorationKind::Triangle,
-                    cx.theme().colors().surface_background,
-                    cx,
-                )
-                .color(cx.theme().status().warning)
-                .position(gpui::Point {
-                    x: px(-2.),
-                    y: px(-2.),
-                }),
-            )
-        } else if self.status == AgentThreadStatus::Error {
-            Some(
-                IconDecoration::new(
-                    IconDecorationKind::X,
-                    cx.theme().colors().surface_background,
-                    cx,
-                )
-                .color(cx.theme().status().error)
-                .position(gpui::Point {
-                    x: px(-2.),
-                    y: px(-2.),
-                }),
-            )
-        } else if self.generation_done {
-            Some(
-                IconDecoration::new(
-                    IconDecorationKind::Dot,
-                    cx.theme().colors().surface_background,
-                    cx,
-                )
-                .color(cx.theme().colors().text_accent)
-                .position(gpui::Point {
-                    x: px(-2.),
-                    y: px(-2.),
-                }),
-            )
-        } else {
-            None
-        };
-
-        let icon = if let Some(decoration) = decoration {
-            icon_container().child(DecoratedIcon::new(agent_icon, Some(decoration)))
+        let icon = if self.generation_done {
+            icon_container().child(DecoratedIcon::new(
+                agent_icon,
+                Some(
+                    IconDecoration::new(
+                        IconDecorationKind::Dot,
+                        cx.theme().colors().surface_background,
+                        cx,
+                    )
+                    .color(cx.theme().colors().text_accent)
+                    .position(gpui::Point {
+                        x: px(-2.),
+                        y: px(-2.),
+                    }),
+                ),
+            ))
         } else {
             icon_container().child(agent_icon)
         };
@@ -353,26 +308,6 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-2", "Refine thread view scrolling behavior")
                             .timestamp("12:12 AM")
                             .generation_done(true),
-                    )
-                    .into_any_element(),
-            ),
-            single_example(
-                "Waiting for Confirmation",
-                container()
-                    .child(
-                        ThreadItem::new("ti-2b", "Execute shell command in terminal")
-                            .timestamp("12:15 AM")
-                            .status(AgentThreadStatus::WaitingForConfirmation),
-                    )
-                    .into_any_element(),
-            ),
-            single_example(
-                "Error",
-                container()
-                    .child(
-                        ThreadItem::new("ti-2c", "Failed to connect to language server")
-                            .timestamp("12:20 AM")
-                            .status(AgentThreadStatus::Error),
                     )
                     .into_any_element(),
             ),

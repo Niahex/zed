@@ -356,11 +356,11 @@ pub(crate) fn new_debugger_pane(
                     debug_assert!(_previous_subscription.is_none());
                     running
                         .panes
-                        .split(&this_pane, &new_pane, split_direction, cx);
-                    new_pane
+                        .split(&this_pane, &new_pane, split_direction, cx)?;
+                    anyhow::Ok(new_pane)
                 });
 
-                match new_pane {
+                match new_pane.and_then(|r| r) {
                     Ok(new_pane) => {
                         move_item(
                             &source,

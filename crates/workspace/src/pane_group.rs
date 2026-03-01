@@ -1,10 +1,10 @@
 use crate::{
-    AnyActiveCall, AppState, CollaboratorId, FollowerState, Pane, ParticipantLocation, Workspace,
-    WorkspaceSettings,
+    AppState, CollaboratorId, FollowerState, Pane, Workspace, WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
 use anyhow::Result;
+use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
@@ -61,33 +61,22 @@ impl PaneGroup {
         new_pane: &Entity<Pane>,
         direction: SplitDirection,
         cx: &mut App,
-    ) {
-        let found = match &mut self.root {
+    ) -> Result<()> {
+        let result = match &mut self.root {
             Member::Pane(pane) => {
                 if pane == old_pane {
                     self.root = Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
-                    true
+                    Ok(())
                 } else {
-                    false
+                    anyhow::bail!("Pane not found");
                 }
             }
             Member::Axis(axis) => axis.split(old_pane, new_pane, direction),
         };
-
-        // If the pane wasn't found, fall back to splitting the first pane in the tree.
-        if !found {
-            let first_pane = self.root.first_pane();
-            match &mut self.root {
-                Member::Pane(_) => {
-                    self.root = Member::new_axis(first_pane, new_pane.clone(), direction);
-                }
-                Member::Axis(axis) => {
-                    let _ = axis.split(&first_pane, new_pane, direction);
-                }
-            }
+        if result.is_ok() {
+            self.mark_positions(cx);
         }
-
-        self.mark_positions(cx);
+        result
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -307,7 +296,7 @@ impl Member {
 pub struct PaneRenderContext<'a> {
     pub project: &'a Entity<Project>,
     pub follower_states: &'a HashMap<CollaboratorId, FollowerState>,
-    pub active_call: Option<&'a dyn AnyActiveCall>,
+    pub active_call: Option<&'a Entity<ActiveCall>>,
     pub active_pane: &'a Entity<Pane>,
     pub app_state: &'a Arc<AppState>,
     pub workspace: &'a WeakEntity<Workspace>,
@@ -369,11 +358,10 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
         let status_box;
         match leader_id {
             CollaboratorId::PeerId(peer_id) => {
-                let Some(leader) = self
-                    .active_call
-                    .as_ref()
-                    .and_then(|call| call.remote_participant_for_peer_id(peer_id, cx))
-                else {
+                let Some(leader) = self.active_call.as_ref().and_then(|call| {
+                    let room = call.read(cx).room()?.read(cx);
+                    room.remote_participant_for_peer_id(peer_id)
+                }) else {
                     return LeaderDecoration::default();
                 };
 
@@ -623,12 +611,12 @@ impl PaneAxis {
         old_pane: &Entity<Pane>,
         new_pane: &Entity<Pane>,
         direction: SplitDirection,
-    ) -> bool {
+    ) -> Result<()> {
         for (mut idx, member) in self.members.iter_mut().enumerate() {
             match member {
                 Member::Axis(axis) => {
-                    if axis.split(old_pane, new_pane, direction) {
-                        return true;
+                    if axis.split(old_pane, new_pane, direction).is_ok() {
+                        return Ok(());
                     }
                 }
                 Member::Pane(pane) => {
@@ -642,12 +630,12 @@ impl PaneAxis {
                             *member =
                                 Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
                         }
-                        return true;
+                        return Ok(());
                     }
                 }
             }
         }
-        false
+        anyhow::bail!("Pane not found");
     }
 
     fn insert_pane(&mut self, idx: usize, new_pane: &Entity<Pane>) {

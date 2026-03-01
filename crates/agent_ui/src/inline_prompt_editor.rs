@@ -1,4 +1,4 @@
-use crate::ThreadHistory;
+use crate::acp::AcpThreadHistory;
 use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use collections::{HashMap, VecDeque};
@@ -64,7 +64,7 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<ThreadHistory>,
+    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -1225,7 +1225,7 @@ impl PromptEditor<BufferCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: WeakEntity<AcpThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1384,7 +1384,7 @@ impl PromptEditor<TerminalCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: WeakEntity<AcpThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,

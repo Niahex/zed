@@ -226,6 +226,11 @@ pub enum CompletionRequestStatus {
         /// Retry duration in seconds.
         retry_after: Option<f64>,
     },
+    UsageUpdated {
+        amount: usize,
+        limit: UsageLimit,
+    },
+    ToolUseLimitReached,
     /// The cloud sends a StreamEnded message when the stream from the LLM provider finishes.
     StreamEnded,
     #[serde(other)]
@@ -306,8 +311,6 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
-    #[serde(default)]
-    pub supports_fast_mode: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,

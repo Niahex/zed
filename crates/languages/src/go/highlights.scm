@@ -1,12 +1,7 @@
 (identifier) @variable
 
 (type_identifier) @type
-
-(type_spec
-  name: (type_identifier) @type.definition)
-
 (field_identifier) @property
-
 (package_identifier) @namespace
 
 (label_name) @label
@@ -17,18 +12,17 @@
     (identifier) @property))
 
 (call_expression
-  function: (identifier) @function.call)
+  function: (identifier) @function)
 
 (call_expression
   function: (selector_expression
-    field: (field_identifier) @function.method.call))
+    field: (field_identifier) @function.method))
 
 (function_declaration
   name: (identifier) @function)
 
 (method_declaration
   name: (field_identifier) @function.method)
-
 (method_elem
   name: (field_identifier) @function.method)
 
@@ -147,7 +141,8 @@
 
 ; Go directives
 ((comment) @preproc
-  (#match? @preproc "^//go:"))
+ (#match? @preproc "^//go:"))
 
 ((comment) @preproc
-  (#match? @preproc "^// \\+build"))
+ (#match? @preproc "^// \\+build"))
+

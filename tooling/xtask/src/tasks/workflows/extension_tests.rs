@@ -5,10 +5,7 @@ use crate::tasks::workflows::{
     extension_bump::compare_versions,
     run_tests::{orchestrate_without_package_filter, tests_pass},
     runners,
-    steps::{
-        self, CommonJobConditions, FluentBuilder, NamedJob, cache_rust_dependencies_namespace,
-        named,
-    },
+    steps::{self, CommonJobConditions, FluentBuilder, NamedJob, named},
     vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
 };
 
@@ -88,11 +85,10 @@ pub(crate) fn check_extension() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
-        .timeout_minutes(6u32)
-        .add_step(steps::checkout_repo().with_full_history())
+        .timeout_minutes(4u32)
+        .add_step(steps::checkout_repo().with_deep_history_on_non_main())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))
-        .add_step(cache_rust_dependencies_namespace()) // Extensions can compile Rust, so provide the cache if needed.
         .add_step(check())
         .add_step(check_version_job)
         .add_step(verify_version_did_not_change(version_changed));

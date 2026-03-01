@@ -4,6 +4,7 @@ use super::tool_permissions::{
 };
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
+use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
@@ -13,9 +14,7 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 use std::path::Path;
 
 /// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
@@ -70,26 +69,21 @@ impl AgentTool for CreateDirectoryTool {
 
     fn run(
         self: Arc<Self>,
-        input: ToolInput<Self::Input>,
+        input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
+    ) -> Task<Result<Self::Output>> {
+        let settings = AgentSettings::get_global(cx);
+        let decision = decide_permission_for_path(Self::NAME, &input.path, settings);
+
+        if let ToolPermissionDecision::Deny(reason) = decision {
+            return Task::ready(Err(anyhow!("{}", reason)));
+        }
+
+        let destination_path: Arc<str> = input.path.as_str().into();
+
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
-            let decision = cx.update(|cx| {
-                decide_permission_for_path(Self::NAME, &input.path, AgentSettings::get_global(cx))
-            });
-
-            if let ToolPermissionDecision::Deny(reason) = decision {
-                return Err(reason);
-            }
-
-            let destination_path: Arc<str> = input.path.as_str().into();
-
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -142,22 +136,22 @@ impl AgentTool for CreateDirectoryTool {
             };
 
             if let Some(authorize) = authorize {
-                authorize.await.map_err(|e| e.to_string())?;
+                authorize.await?;
             }
 
             let create_entry = project.update(cx, |project, cx| {
                 match project.find_project_path(&input.path, cx) {
                     Some(project_path) => Ok(project.create_entry(project_path, true, cx)),
-                    None => Err("Path to create was outside the project".to_string()),
+                    None => Err(anyhow!("Path to create was outside the project")),
                 }
             })?;
 
             futures::select! {
                 result = create_entry.fuse() => {
-                    result.map_err(|e| format!("Creating directory {destination_path}: {e}"))?;
+                    result.with_context(|| format!("Creating directory {destination_path}"))?;
                 }
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err("Create directory cancelled by user".to_string());
+                    anyhow::bail!("Create directory cancelled by user");
                 }
             }
 
@@ -225,9 +219,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                ToolInput::resolved(CreateDirectoryToolInput {
+                CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                }),
+                },
                 event_stream,
                 cx,
             )
@@ -284,9 +278,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                ToolInput::resolved(CreateDirectoryToolInput {
+                CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                }),
+                },
                 event_stream,
                 cx,
             )
@@ -343,9 +337,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                ToolInput::resolved(CreateDirectoryToolInput {
+                CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                }),
+                },
                 event_stream,
                 cx,
             )
@@ -422,9 +416,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.run(
-                    ToolInput::resolved(CreateDirectoryToolInput {
+                    CreateDirectoryToolInput {
                         path: "project/link_to_external".into(),
-                    }),
+                    },
                     event_stream,
                     cx,
                 )

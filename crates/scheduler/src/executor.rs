@@ -1,4 +1,4 @@
-use crate::{Instant, Priority, RunnableMeta, Scheduler, SessionId, Timer};
+use crate::{Priority, RunnableMeta, Scheduler, SessionId, Timer};
 use std::{
     future::Future,
     marker::PhantomData,
@@ -12,7 +12,7 @@ use std::{
     },
     task::{Context, Poll},
     thread::{self, ThreadId},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone)]
@@ -116,7 +116,6 @@ impl ForegroundExecutor {
         }
     }
 
-    #[track_caller]
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
     }
@@ -212,7 +211,6 @@ impl BackgroundExecutor {
         Task(TaskState::Spawned(task))
     }
 
-    #[track_caller]
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
     }

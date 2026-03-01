@@ -5,10 +5,9 @@ use chrono::{DateTime, Utc};
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 use cloud_llm_client::{
-    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
-    CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
-    CountTokensBody, CountTokensResponse, ListModelsResponse,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody,
+    CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
+    ListModelsResponse, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt,
@@ -398,7 +397,8 @@ impl CloudLanguageModel {
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
-                .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true")
+                // TODO: Uncomment once the cloud-side StreamEnded support PR is merged.
+                // .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true")
                 .body(serde_json::to_string(&body)?.into())?;
 
             let mut response = http_client.send(request).await?;
@@ -569,10 +569,6 @@ impl LanguageModel for CloudLanguageModel {
 
     fn supports_thinking(&self) -> bool {
         self.model.supports_thinking
-    }
-
-    fn supports_fast_mode(&self) -> bool {
-        self.model.supports_fast_mode
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
@@ -942,7 +938,8 @@ where
     let provider = provider.clone();
     let mut stream = stream.fuse();
 
-    let mut saw_stream_ended = false;
+    // TODO: Uncomment once the cloud-side StreamEnded support PR is merged.
+    // let mut saw_stream_ended = false;
 
     let mut done = false;
     let mut pending = VecDeque::new();
@@ -964,7 +961,10 @@ where
                             vec![Err(LanguageModelCompletionError::from(error))]
                         }
                         Ok(CompletionEvent::Status(CompletionRequestStatus::StreamEnded)) => {
-                            saw_stream_ended = true;
+                            // TODO: Uncomment once the cloud-side StreamEnded support PR is merged.
+                            // let mut saw_stream_ended = false;
+                            //
+                            // saw_stream_ended = true;
                             vec![]
                         }
                         Ok(CompletionEvent::Status(status)) => {
@@ -983,13 +983,15 @@ where
                 Poll::Ready(None) => {
                     done = true;
 
-                    if !saw_stream_ended {
-                        return Poll::Ready(Some(Err(
-                            LanguageModelCompletionError::StreamEndedUnexpectedly {
-                                provider: provider.clone(),
-                            },
-                        )));
-                    }
+                    // TODO: Uncomment once the cloud-side StreamEnded support PR is merged.
+                    //
+                    // if !saw_stream_ended {
+                    //     return Poll::Ready(Some(Err(
+                    //         LanguageModelCompletionError::StreamEndedUnexpectedly {
+                    //             provider: provider.clone(),
+                    //         },
+                    //     )));
+                    // }
                 }
                 Poll::Pending => return Poll::Pending,
             }

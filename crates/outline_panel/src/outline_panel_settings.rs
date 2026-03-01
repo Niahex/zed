@@ -53,7 +53,6 @@ impl Settings for OutlinePanelSettings {
             git_status: panel.git_status.unwrap()
                 && content
                     .git
-                    .as_ref()
                     .unwrap()
                     .enabled
                     .unwrap()

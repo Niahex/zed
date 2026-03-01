@@ -745,7 +745,7 @@ impl InlayMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
+    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
         self.inlays.iter()
     }
 
@@ -1328,10 +1328,9 @@ mod tests {
     use super::*;
     use crate::{
         MultiBuffer,
-        display_map::{HighlightKey, InlayHighlights},
+        display_map::{HighlightKey, InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
     };
-    use collections::HashMap;
     use gpui::{App, HighlightStyle};
     use multi_buffer::Anchor;
     use project::{InlayHint, InlayHintLabel, ResolveState};
@@ -1898,7 +1897,7 @@ mod tests {
                 );
             }
 
-            let mut text_highlights = HashMap::default();
+            let mut text_highlights = TextHighlights::default();
             let text_highlight_count = rng.random_range(0_usize..10);
             let mut text_highlight_ranges = (0..text_highlight_count)
                 .map(|_| buffer_snapshot.random_byte_range(MultiBufferOffset(0), &mut rng))
@@ -1918,7 +1917,6 @@ mod tests {
                         .collect(),
                 )),
             );
-            let text_highlights = Arc::new(text_highlights);
 
             let mut inlay_highlights = InlayHighlights::default();
             if !inlays.is_empty() {

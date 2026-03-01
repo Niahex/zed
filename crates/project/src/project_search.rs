@@ -728,15 +728,9 @@ impl RequestHandler<'_> {
     }
 
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
-        async move {
+        _=maybe!(async move {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
-            let Some(file) = self
-                .fs
-                .context("Trying to query filesystem in remote project search")?
-                .open_sync(&abs_path)
-                .await
-                .log_err()
-            else {
+            let Some(file) = self.fs.context("Trying to query filesystem in remote project search")?.open_sync(&abs_path).await.log_err() else {
                 return anyhow::Ok(());
             };
 
@@ -744,13 +738,12 @@ impl RequestHandler<'_> {
             let file_start = file.fill_buf()?;
 
             if let Err(Some(starting_position)) =
-                std::str::from_utf8(file_start).map_err(|e| e.error_len())
+            std::str::from_utf8(file_start).map_err(|e| e.error_len())
             {
                 // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
                 // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
                 log::debug!(
-                    "Invalid UTF-8 sequence in file {abs_path:?} \
-                    at byte position {starting_position}"
+                    "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
                 );
                 return Ok(());
             }
@@ -760,9 +753,7 @@ impl RequestHandler<'_> {
                 entry.should_scan_tx.send(entry.path).await?;
             }
             Ok(())
-        }
-        .await
-        .ok();
+        }).await;
     }
 
     async fn handle_scan_path(&self, req: InputPath) {

@@ -1,10 +1,7 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use gpui::{
-    App, Bounds, Context, Div, ElementId, FocusHandle, KeyBinding, SharedString, Stateful, Window,
-    WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
+    App, Application, Bounds, Context, Div, ElementId, FocusHandle, KeyBinding, SharedString,
+    Stateful, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
-use gpui_platform::application;
 
 actions!(example, [Tab, TabPrev, Quit]);
 
@@ -194,8 +191,8 @@ impl Render for Example {
     }
 }
 
-fn run_example() {
-    application().run(|cx: &mut App| {
+fn main() {
+    Application::new().run(|cx: &mut App| {
         cx.bind_keys([
             KeyBinding::new("tab", Tab, None),
             KeyBinding::new("shift-tab", TabPrev, None),
@@ -214,16 +211,4 @@ fn run_example() {
 
         cx.activate(true);
     });
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
-    run_example();
 }

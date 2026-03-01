@@ -531,12 +531,12 @@ impl KeymapFile {
         None
     }
 
-    pub fn generate_json_schema<'a>(
+    fn generate_json_schema(
         mut generator: schemars::SchemaGenerator,
-        action_schemas: Vec<(&'a str, Option<schemars::Schema>)>,
-        action_documentation: &HashMap<&'a str, &'a str>,
-        deprecations: &HashMap<&'a str, &'a str>,
-        deprecation_messages: &HashMap<&'a str, &'a str>,
+        action_schemas: Vec<(&'static str, Option<schemars::Schema>)>,
+        action_documentation: &HashMap<&'static str, &'static str>,
+        deprecations: &HashMap<&'static str, &'static str>,
+        deprecation_messages: &HashMap<&'static str, &'static str>,
     ) -> serde_json::Value {
         fn add_deprecation(schema: &mut schemars::Schema, message: String) {
             schema.insert(

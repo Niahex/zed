@@ -23,7 +23,7 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
 
 If you cannot compile Zed, make sure a Visual Studio installation includes at least the following components:
 
-```json
+```json [settings]
 {
   "version": "1.0",
   "components": [
@@ -41,7 +41,7 @@ If you cannot compile Zed, make sure a Visual Studio installation includes at le
 
 If you are using Build Tools only, make sure these components are installed:
 
-```json
+```json [settings]
 {
   "version": "1.0",
   "components": [

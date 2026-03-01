@@ -43,7 +43,7 @@ impl FeatureFlag for SubagentsFeatureFlag {
     const NAME: &'static str = "subagents";
 
     fn enabled_for_staff() -> bool {
-        true
+        false
     }
 }
 
@@ -51,22 +51,6 @@ pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
     const NAME: &'static str = "diff-review";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-
-pub struct GitGraphFeatureFlag;
-
-impl FeatureFlag for GitGraphFeatureFlag {
-    const NAME: &'static str = "git-graph";
-}
-
-pub struct StreamingEditFileToolFeatureFlag;
-
-impl FeatureFlag for StreamingEditFileToolFeatureFlag {
-    const NAME: &'static str = "streaming-edit-file-tool";
 
     fn enabled_for_staff() -> bool {
         false

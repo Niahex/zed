@@ -102,7 +102,6 @@ impl UserMessage {
 pub struct AssistantMessage {
     pub chunks: Vec<AssistantMessageChunk>,
     pub indented: bool,
-    pub is_subagent_output: bool,
 }
 
 impl AssistantMessage {
@@ -401,7 +400,7 @@ impl ToolCall {
     }
 
     pub fn is_subagent(&self) -> bool {
-        self.tool_name.as_ref().is_some_and(|s| s == "spawn_agent")
+        self.tool_name.as_ref().is_some_and(|s| s == "subagent")
             || self.subagent_session_id.is_some()
     }
 
@@ -896,17 +895,15 @@ pub struct TokenUsage {
     pub max_output_tokens: Option<u64>,
 }
 
-pub const TOKEN_USAGE_WARNING_THRESHOLD: f32 = 0.8;
-
 impl TokenUsage {
     pub fn ratio(&self) -> TokenUsageRatio {
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or(TOKEN_USAGE_WARNING_THRESHOLD.to_string())
+            .unwrap_or("0.8".to_string())
             .parse()
             .unwrap();
         #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = TOKEN_USAGE_WARNING_THRESHOLD;
+        let warning_threshold: f32 = 0.8;
 
         // When the maximum is unknown because there is no selected model,
         // avoid showing the token limit warning.
@@ -938,11 +935,6 @@ pub struct RetryStatus {
     pub duration: Duration,
 }
 
-struct RunningTurn {
-    id: u32,
-    send_task: Task<()>,
-}
-
 pub struct AcpThread {
     parent_session_id: Option<acp::SessionId>,
     title: SharedString,
@@ -951,8 +943,7 @@ pub struct AcpThread {
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
-    turn_id: u32,
-    running_turn: Option<RunningTurn>,
+    send_task: Option<Task<()>>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
@@ -961,7 +952,9 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
-    had_error: bool,
+    // subagent cancellation fields
+    user_stopped: Arc<std::sync::atomic::AtomicBool>,
+    user_stop_tx: watch::Sender<bool>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -980,11 +973,10 @@ pub enum AcpThreadEvent {
     TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
-    ToolAuthorizationRequested(acp::ToolCallId),
-    ToolAuthorizationReceived(acp::ToolCallId),
+    ToolAuthorizationRequired,
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
-    Stopped(acp::StopReason),
+    Stopped,
     Error,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
@@ -1180,6 +1172,8 @@ impl AcpThread {
             }
         });
 
+        let (user_stop_tx, _user_stop_rx) = watch::channel(false);
+
         Self {
             parent_session_id,
             action_log,
@@ -1188,8 +1182,7 @@ impl AcpThread {
             plan: Default::default(),
             title: title.into(),
             project,
-            running_turn: None,
-            turn_id: 0,
+            send_task: None,
             connection,
             session_id,
             token_usage: None,
@@ -1198,7 +1191,8 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
-            had_error: false,
+            user_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            user_stop_tx,
         }
     }
 
@@ -1208,6 +1202,22 @@ impl AcpThread {
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
+    }
+
+    /// Marks this thread as stopped by user action and signals any listeners.
+    pub fn stop_by_user(&mut self) {
+        self.user_stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.user_stop_tx.send(true).ok();
+        self.send_task.take();
+    }
+
+    pub fn was_stopped_by_user(&self) -> bool {
+        self.user_stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn user_stop_receiver(&self) -> watch::Receiver<bool> {
+        self.user_stop_tx.receiver()
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -1235,29 +1245,11 @@ impl AcpThread {
     }
 
     pub fn status(&self) -> ThreadStatus {
-        if self.running_turn.is_some() {
+        if self.send_task.is_some() {
             ThreadStatus::Generating
         } else {
             ThreadStatus::Idle
         }
-    }
-
-    pub fn had_error(&self) -> bool {
-        self.had_error
-    }
-
-    pub fn is_waiting_for_confirmation(&self) -> bool {
-        for entry in self.entries.iter().rev() {
-            match entry {
-                AgentThreadEntry::UserMessage(_) => return false,
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::WaitingForConfirmation { .. },
-                    ..
-                }) => return true,
-                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
-            }
-        }
-        false
     }
 
     pub fn token_usage(&self) -> Option<&TokenUsage> {
@@ -1426,7 +1418,6 @@ impl AcpThread {
             && let AgentThreadEntry::AssistantMessage(AssistantMessage {
                 chunks,
                 indented: existing_indented,
-                is_subagent_output: _,
             }) = last_entry
             && *existing_indented == indented
         {
@@ -1458,7 +1449,6 @@ impl AcpThread {
                 AgentThreadEntry::AssistantMessage(AssistantMessage {
                     chunks: vec![chunk],
                     indented,
-                    is_subagent_output: false,
                 }),
                 cx,
             );
@@ -1672,7 +1662,7 @@ impl AcpThread {
             })
     }
 
-    pub fn tool_call(&self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
+    pub fn tool_call(&mut self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
         self.entries
             .iter()
             .enumerate()
@@ -1686,17 +1676,6 @@ impl AcpThread {
                     None
                 }
             })
-    }
-
-    pub fn tool_call_for_subagent(&self, session_id: &acp::SessionId) -> Option<&ToolCall> {
-        self.entries.iter().find_map(|entry| match entry {
-            AgentThreadEntry::ToolCall(tool_call)
-                if tool_call.subagent_session_id.as_ref() == Some(session_id) =>
-            {
-                Some(tool_call)
-            }
-            _ => None,
-        })
     }
 
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
@@ -1761,7 +1740,7 @@ impl AcpThread {
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
         cx: &mut Context<Self>,
-    ) -> Result<Task<acp::RequestPermissionOutcome>> {
+    ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
@@ -1769,25 +1748,20 @@ impl AcpThread {
             respond_tx: tx,
         };
 
-        let tool_call_id = tool_call.tool_call_id.clone();
         self.upsert_tool_call_inner(tool_call, status, cx)?;
-        cx.emit(AcpThreadEvent::ToolAuthorizationRequested(
-            tool_call_id.clone(),
-        ));
+        cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
 
-        Ok(cx.spawn(async move |this, cx| {
-            let outcome = match rx.await {
+        let fut = async {
+            match rx.await {
                 Ok(option) => acp::RequestPermissionOutcome::Selected(
                     acp::SelectedPermissionOutcome::new(option),
                 ),
                 Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
-            };
-            this.update(cx, |_this, cx| {
-                cx.emit(AcpThreadEvent::ToolAuthorizationReceived(tool_call_id))
-            })
-            .ok();
-            outcome
-        }))
+            }
+        }
+        .boxed();
+
+        Ok(fut)
     }
 
     pub fn authorize_tool_call(
@@ -1820,6 +1794,29 @@ impl AcpThread {
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
+    }
+
+    pub fn first_tool_awaiting_confirmation(&self) -> Option<&ToolCall> {
+        let mut first_tool_call = None;
+
+        for entry in self.entries.iter().rev() {
+            match &entry {
+                AgentThreadEntry::ToolCall(call) => {
+                    if let ToolCallStatus::WaitingForConfirmation { .. } = call.status {
+                        first_tool_call = Some(call);
+                    } else {
+                        continue;
+                    }
+                }
+                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
+                    // Reached the beginning of the turn.
+                    // If we had pending permission requests in the previous turn, they have been cancelled.
+                    break;
+                }
+            }
+        }
+
+        first_tool_call
     }
 
     pub fn plan(&self) -> &Plan {
@@ -1863,7 +1860,7 @@ impl AcpThread {
         &mut self,
         message: &str,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    ) -> BoxFuture<'static, Result<()>> {
         self.send(vec![message.into()], cx)
     }
 
@@ -1871,7 +1868,7 @@ impl AcpThread {
         &mut self,
         message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    ) -> BoxFuture<'static, Result<()>> {
         let block = ContentBlock::new_combined(
             message.clone(),
             self.project.read(cx).languages().clone(),
@@ -1924,10 +1921,7 @@ impl AcpThread {
         self.connection.retry(&self.session_id, cx).is_some()
     }
 
-    pub fn retry(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    pub fn retry(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
                 this.connection
@@ -1943,22 +1937,16 @@ impl AcpThread {
         &mut self,
         cx: &mut Context<Self>,
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
-    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+    ) -> BoxFuture<'static, Result<()>> {
         self.clear_completed_plan_entries(cx);
-        self.had_error = false;
 
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
 
-        self.turn_id += 1;
-        let turn_id = self.turn_id;
-        self.running_turn = Some(RunningTurn {
-            id: turn_id,
-            send_task: cx.spawn(async move |this, cx| {
-                cancel_task.await;
-                tx.send(f(this, cx).await).ok();
-            }),
-        });
+        self.send_task = Some(cx.spawn(async move |this, cx| {
+            cancel_task.await;
+            tx.send(f(this, cx).await).ok();
+        }));
 
         cx.spawn(async move |this, cx| {
             let response = rx.await;
@@ -1969,40 +1957,43 @@ impl AcpThread {
             this.update(cx, |this, cx| {
                 this.project
                     .update(cx, |project, cx| project.set_agent_location(None, cx));
-                let Ok(response) = response else {
-                    // tx dropped, just return
-                    return Ok(None);
-                };
-
-                let is_same_turn = this
-                    .running_turn
-                    .as_ref()
-                    .is_some_and(|turn| turn_id == turn.id);
-
-                // If the user submitted a follow up message, running_turn might
-                // already point to a different turn. Therefore we only want to
-                // take the task if it's the same turn.
-                if is_same_turn {
-                    this.running_turn.take();
-                }
-
                 match response {
-                    Ok(r) => {
-                        if r.stop_reason == acp::StopReason::MaxTokens {
-                            this.had_error = true;
-                            cx.emit(AcpThreadEvent::Error);
-                            log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
-                            return Err(anyhow!("Max tokens reached"));
-                        }
+                    Ok(Err(e)) => {
+                        this.send_task.take();
+                        cx.emit(AcpThreadEvent::Error);
+                        log::error!("Error in run turn: {:?}", e);
+                        Err(e)
+                    }
+                    Ok(Ok(r)) if r.stop_reason == acp::StopReason::MaxTokens => {
+                        this.send_task.take();
+                        cx.emit(AcpThreadEvent::Error);
+                        log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
+                        Err(anyhow!("Max tokens reached"))
+                    }
+                    result => {
+                        let canceled = matches!(
+                            result,
+                            Ok(Ok(acp::PromptResponse {
+                                stop_reason: acp::StopReason::Cancelled,
+                                ..
+                            }))
+                        );
 
-                        let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
-                        if canceled {
-                            this.mark_pending_tools_as_canceled();
+                        // We only take the task if the current prompt wasn't canceled.
+                        //
+                        // This prompt may have been canceled because another one was sent
+                        // while it was still generating. In these cases, dropping `send_task`
+                        // would cause the next generation to be canceled.
+                        if !canceled {
+                            this.send_task.take();
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
-                        if let acp::StopReason::Refusal = r.stop_reason {
-                            this.had_error = true;
+                        if let Ok(Ok(acp::PromptResponse {
+                            stop_reason: acp::StopReason::Refusal,
+                            ..
+                        })) = result
+                        {
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
                                 // Check if there's a completed tool call with results after the last user message
                                 // This indicates the refusal is in response to tool output, not the user's prompt
@@ -2036,14 +2027,8 @@ impl AcpThread {
                             }
                         }
 
-                        cx.emit(AcpThreadEvent::Stopped(r.stop_reason));
-                        Ok(Some(r))
-                    }
-                    Err(e) => {
-                        this.had_error = true;
-                        cx.emit(AcpThreadEvent::Error);
-                        log::error!("Error in run turn: {:?}", e);
-                        Err(e)
+                        cx.emit(AcpThreadEvent::Stopped);
+                        Ok(())
                     }
                 }
             })?
@@ -2052,18 +2037,10 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let Some(turn) = self.running_turn.take() else {
+        let Some(send_task) = self.send_task.take() else {
             return Task::ready(());
         };
-        self.connection.cancel(&self.session_id, cx);
 
-        self.mark_pending_tools_as_canceled();
-
-        // Wait for the send task to complete
-        cx.background_spawn(turn.send_task)
-    }
-
-    fn mark_pending_tools_as_canceled(&mut self) {
         for entry in self.entries.iter_mut() {
             if let AgentThreadEntry::ToolCall(call) = entry {
                 let cancel = matches!(
@@ -2078,6 +2055,11 @@ impl AcpThread {
                 }
             }
         }
+
+        self.connection.cancel(&self.session_id, cx);
+
+        // Wait for the send task to complete
+        cx.foreground_executor().spawn(send_task)
     }
 
     /// Restores the git working tree to the state at the given checkpoint (if one exists)
@@ -2333,7 +2315,7 @@ impl AcpThread {
                     text_diff(old_text.as_str(), &content)
                         .into_iter()
                         .map(|(range, replacement)| {
-                            (snapshot.anchor_range_around(range), replacement)
+                            (snapshot.anchor_range_between(range), replacement)
                         })
                         .collect::<Vec<_>>()
                 })
@@ -2551,16 +2533,6 @@ impl AcpThread {
         });
         self.terminals.insert(terminal_id.clone(), entity.clone());
         entity
-    }
-
-    pub fn mark_as_subagent_output(&mut self, cx: &mut Context<Self>) {
-        for entry in self.entries.iter_mut().rev() {
-            if let AgentThreadEntry::AssistantMessage(assistant_message) = entry {
-                assistant_message.is_subagent_output = true;
-                cx.notify();
-                return;
-            }
-        }
     }
 }
 
@@ -3981,7 +3953,18 @@ mod tests {
             }
         }
 
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+        fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
+            let sessions = self.sessions.lock();
+            let thread = sessions.get(session_id).unwrap().clone();
+
+            cx.spawn(async move |cx| {
+                thread
+                    .update(cx, |thread, cx| thread.cancel(cx))
+                    .unwrap()
+                    .await
+            })
+            .detach();
+        }
 
         fn truncate(
             &self,
@@ -4311,7 +4294,7 @@ mod tests {
 
         // Verify that no send_task is in progress after restore
         // (cancel() clears the send_task)
-        let has_send_task_after = thread.read_with(cx, |thread, _| thread.running_turn.is_some());
+        let has_send_task_after = thread.read_with(cx, |thread, _| thread.send_task.is_some());
         assert!(
             !has_send_task_after,
             "Should not have a send_task after restore (cancel should have cleared it)"
@@ -4431,162 +4414,5 @@ mod tests {
             "send should succeed even when new message added during update_last_checkpoint: {:?}",
             result.err()
         );
-    }
-
-    /// Tests that when a follow-up message is sent during generation,
-    /// the first turn completing does NOT clear `running_turn` because
-    /// it now belongs to the second turn.
-    #[gpui::test]
-    async fn test_follow_up_message_during_generation_does_not_clear_turn(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-
-        // First handler waits for this signal before completing
-        let (first_complete_tx, first_complete_rx) = futures::channel::oneshot::channel::<()>();
-        let first_complete_rx = RefCell::new(Some(first_complete_rx));
-
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
-            move |params, _thread, _cx| {
-                let first_complete_rx = first_complete_rx.borrow_mut().take();
-                let is_first = params
-                    .prompt
-                    .iter()
-                    .any(|c| matches!(c, acp::ContentBlock::Text(t) if t.text.contains("first")));
-
-                async move {
-                    if is_first {
-                        // First handler waits until signaled
-                        if let Some(rx) = first_complete_rx {
-                            rx.await.ok();
-                        }
-                    }
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
-                }
-                .boxed_local()
-            }
-        }));
-
-        let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
-            .await
-            .unwrap();
-
-        // Send first message (turn_id=1) - handler will block
-        let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
-        assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 1);
-
-        // Send second message (turn_id=2) while first is still blocked
-        // This calls cancel() which takes turn 1's running_turn and sets turn 2's
-        let second_request = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
-        assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 2);
-
-        let running_turn_after_second_send =
-            thread.read_with(cx, |thread, _| thread.running_turn.as_ref().map(|t| t.id));
-        assert_eq!(
-            running_turn_after_second_send,
-            Some(2),
-            "running_turn should be set to turn 2 after sending second message"
-        );
-
-        // Now signal first handler to complete
-        first_complete_tx.send(()).ok();
-
-        // First request completes - should NOT clear running_turn
-        // because running_turn now belongs to turn 2
-        first_request.await.unwrap();
-
-        let running_turn_after_first =
-            thread.read_with(cx, |thread, _| thread.running_turn.as_ref().map(|t| t.id));
-        assert_eq!(
-            running_turn_after_first,
-            Some(2),
-            "first turn completing should not clear running_turn (belongs to turn 2)"
-        );
-
-        // Second request completes - SHOULD clear running_turn
-        second_request.await.unwrap();
-
-        let running_turn_after_second =
-            thread.read_with(cx, |thread, _| thread.running_turn.is_some());
-        assert!(
-            !running_turn_after_second,
-            "second turn completing should clear running_turn"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_send_returns_cancelled_response_and_marks_tools_as_cancelled(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
-            move |_params, thread, mut cx| {
-                async move {
-                    thread
-                        .update(&mut cx, |thread, cx| {
-                            thread.handle_session_update(
-                                acp::SessionUpdate::ToolCall(
-                                    acp::ToolCall::new(
-                                        acp::ToolCallId::new("test-tool"),
-                                        "Test Tool",
-                                    )
-                                    .kind(acp::ToolKind::Fetch)
-                                    .status(acp::ToolCallStatus::InProgress),
-                                ),
-                                cx,
-                            )
-                        })
-                        .unwrap()
-                        .unwrap();
-
-                    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
-                }
-                .boxed_local()
-            },
-        ));
-
-        let thread = cx
-            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
-            .await
-            .unwrap();
-
-        let response = thread
-            .update(cx, |thread, cx| thread.send_raw("test message", cx))
-            .await;
-
-        let response = response
-            .expect("send should succeed")
-            .expect("should have response");
-        assert_eq!(
-            response.stop_reason,
-            acp::StopReason::Cancelled,
-            "response should have Cancelled stop_reason"
-        );
-
-        thread.read_with(cx, |thread, _| {
-            let tool_entry = thread
-                .entries
-                .iter()
-                .find_map(|e| {
-                    if let AgentThreadEntry::ToolCall(call) = e {
-                        Some(call)
-                    } else {
-                        None
-                    }
-                })
-                .expect("should have tool call entry");
-
-            assert!(
-                matches!(tool_entry.status, ToolCallStatus::Canceled),
-                "tool should be marked as Canceled when response is Cancelled, got {:?}",
-                tool_entry.status
-            );
-        });
     }
 }

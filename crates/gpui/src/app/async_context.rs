@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use futures::future::FutureExt;
+use smol::future::FutureExt;
 use std::{future::Future, rc::Weak};
 
 use super::{Context, WeakEntity};
@@ -104,7 +104,6 @@ impl AppContext for AsyncApp {
         lock.read_window(window, read)
     }
 
-    #[track_caller]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
@@ -241,10 +240,10 @@ impl AsyncApp {
         &self,
         entity: &WeakEntity<T>,
         f: Callback,
-    ) -> gpui_util::Deferred<impl FnOnce() + use<T, Callback>> {
+    ) -> util::Deferred<impl FnOnce() + use<T, Callback>> {
         let entity = entity.clone();
         let mut cx = self.clone();
-        gpui_util::defer(move || {
+        util::defer(move || {
             entity.update(&mut cx, f).ok();
         })
     }
@@ -408,7 +407,6 @@ impl AppContext for AsyncWindowContext {
         self.app.read_window(window, read)
     }
 
-    #[track_caller]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,

@@ -1,6 +1,6 @@
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
@@ -114,64 +114,66 @@ impl AgentTool for GrepTool {
 
     fn run(
         self: Arc<Self>,
-        input: ToolInput<Self::Input>,
+        input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
+    ) -> Task<Result<Self::Output>> {
         const CONTEXT_LINES: u32 = 2;
         const MAX_ANCESTOR_LINES: u32 = 10;
 
-        let project = self.project.clone();
+        let path_style = self.project.read(cx).path_style(cx);
+
+        let include_matcher = match PathMatcher::new(
+            input
+                .include_pattern
+                .as_ref()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            path_style,
+        ) {
+            Ok(matcher) => matcher,
+            Err(error) => {
+                return Task::ready(Err(anyhow!("invalid include glob pattern: {error}")));
+            }
+        };
+
+        // Exclude global file_scan_exclusions and private_files settings
+        let exclude_matcher = {
+            let global_settings = WorktreeSettings::get_global(cx);
+            let exclude_patterns = global_settings
+                .file_scan_exclusions
+                .sources()
+                .chain(global_settings.private_files.sources());
+
+            match PathMatcher::new(exclude_patterns, path_style) {
+                Ok(matcher) => matcher,
+                Err(error) => {
+                    return Task::ready(Err(anyhow!("invalid exclude pattern: {error}")));
+                }
+            }
+        };
+
+        let query = match SearchQuery::regex(
+            &input.regex,
+            false,
+            input.case_sensitive,
+            false,
+            false,
+            include_matcher,
+            exclude_matcher,
+            true, // Always match file include pattern against *full project paths* that start with a project root.
+            None,
+        ) {
+            Ok(query) => query,
+            Err(error) => return Task::ready(Err(error)),
+        };
+
+        let results = self
+            .project
+            .update(cx, |project, cx| project.search(query, cx));
+
+        let project = self.project.downgrade();
         cx.spawn(async move |cx|  {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
-
-            let results = cx.update(|cx| {
-                let path_style = project.read(cx).path_style(cx);
-
-                let include_matcher = PathMatcher::new(
-                    input
-                        .include_pattern
-                        .as_ref()
-                        .into_iter()
-                        .collect::<Vec<_>>(),
-                    path_style,
-                )
-                .map_err(|error| format!("invalid include glob pattern: {error}"))?;
-
-                // Exclude global file_scan_exclusions and private_files settings
-                let exclude_matcher = {
-                    let global_settings = WorktreeSettings::get_global(cx);
-                    let exclude_patterns = global_settings
-                        .file_scan_exclusions
-                        .sources()
-                        .chain(global_settings.private_files.sources());
-
-                    PathMatcher::new(exclude_patterns, path_style)
-                        .map_err(|error| format!("invalid exclude pattern: {error}"))?
-                };
-
-                let query = SearchQuery::regex(
-                    &input.regex,
-                    false,
-                    input.case_sensitive,
-                    false,
-                    false,
-                    include_matcher,
-                    exclude_matcher,
-                    true, // Always match file include pattern against *full project paths* that start with a project root.
-                    None,
-                )
-                .map_err(|error| error.to_string())?;
-
-                Ok::<_, String>(
-                    project.update(cx, |project, cx| project.search(query, cx)),
-                )
-            })?;
-
-            let project = project.downgrade();
             // Keep the search alive for the duration of result iteration. Dropping this task is the
             // cancellation mechanism; we intentionally do not detach it.
             let SearchResults {rx, _task_handle}  = results;
@@ -186,7 +188,7 @@ impl AgentTool for GrepTool {
                 let search_result = futures::select! {
                     result = rx.next().fuse() => result,
                     _ = event_stream.cancelled_by_user().fuse() => {
-                        return Err("Search cancelled by user".to_string());
+                        anyhow::bail!("Search cancelled by user");
                     }
                 };
                 let Some(SearchResult::Buffer { buffer, ranges }) = search_result else {
@@ -216,7 +218,7 @@ impl AgentTool for GrepTool {
                 }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
-                    parse_status.changed().await.map_err(|e| e.to_string())?;
+                    parse_status.changed().await?;
                 }
 
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
@@ -278,8 +280,7 @@ impl AgentTool for GrepTool {
                     }
 
                     if !file_header_written {
-                        writeln!(output, "\n## Matches in {}", path.display())
-                            .ok();
+                        writeln!(output, "\n## Matches in {}", path.display())?;
                         file_header_written = true;
                     }
 
@@ -287,16 +288,13 @@ impl AgentTool for GrepTool {
                     output.push_str("\n### ");
 
                     for symbol in parent_symbols {
-                        write!(output, "{} › ", symbol.text)
-                            .ok();
+                        write!(output, "{} › ", symbol.text)?;
                     }
 
                     if range.start.row == end_row {
-                        writeln!(output, "L{}", range.start.row + 1)
-                            .ok();
+                        writeln!(output, "L{}", range.start.row + 1)?;
                     } else {
-                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)
-                            .ok();
+                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)?;
                     }
 
                     output.push_str("```\n");
@@ -306,8 +304,7 @@ impl AgentTool for GrepTool {
                     if let Some(ancestor_range) = ancestor_range
                         && end_row < ancestor_range.end.row {
                             let remaining_lines = ancestor_range.end.row - end_row;
-                            writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)
-                                .ok();
+                            writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)?;
                         }
 
                     matches_found += 1;
@@ -785,13 +782,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> String {
         let tool = Arc::new(GrepTool { project });
-        let task = cx.update(|cx| {
-            tool.run(
-                ToolInput::resolved(input),
-                ToolCallEventStream::test().0,
-                cx,
-            )
-        });
+        let task = cx.update(|cx| tool.run(input, ToolCallEventStream::test().0, cx));
 
         match task.await {
             Ok(result) => {

@@ -2,8 +2,9 @@ use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_project_path,
 };
-use crate::{AgentTool, ToolInput};
+use crate::AgentTool;
 use agent_client_protocol::ToolKind;
+use anyhow::{Context as _, Result};
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use project::Project;
@@ -61,24 +62,16 @@ impl AgentTool for OpenTool {
 
     fn run(
         self: Arc<Self>,
-        input: ToolInput<Self::Input>,
+        input: Self::Input,
         event_stream: crate::ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
+    ) -> Task<Result<Self::Output>> {
+        // If path_or_url turns out to be a path in the project, make it absolute.
+        let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
+        let initial_title = self.initial_title(Ok(input.clone()), cx);
+
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
-
-            // If path_or_url turns out to be a path in the project, make it absolute.
-            let (abs_path, initial_title) = cx.update(|cx| {
-                let abs_path = to_absolute_path(&input.path_or_url, project.clone(), cx);
-                let initial_title = self.initial_title(Ok(input.clone()), cx);
-                (abs_path, initial_title)
-            });
-
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -121,9 +114,9 @@ impl AgentTool for OpenTool {
             };
 
             futures::select! {
-                result = authorize.fuse() => result.map_err(|e| e.to_string())?,
+                result = authorize.fuse() => result?,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err("Open cancelled by user".to_string());
+                    anyhow::bail!("Open cancelled by user");
                 }
             }
 
@@ -133,7 +126,7 @@ impl AgentTool for OpenTool {
                     Some(path) => open::that(path),
                     None => open::that(path_or_url),
                 }
-                .map_err(|e| format!("Failed to open URL or file path: {e}"))
+                .context("Failed to open URL or file path")
             })
             .await?;
 

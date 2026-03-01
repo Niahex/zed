@@ -1,12 +1,11 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant};
-use scheduler::Instant;
 use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
 use std::{
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// TestDispatcher provides deterministic async execution for tests.
@@ -103,13 +102,8 @@ impl PlatformDispatcher for TestDispatcher {
         Vec::new()
     }
 
-    fn get_current_thread_timings(&self) -> crate::ThreadTaskTimings {
-        crate::ThreadTaskTimings {
-            thread_name: None,
-            thread_id: std::thread::current().id(),
-            timings: Vec::new(),
-            total_pushed: 0,
-        }
+    fn get_current_thread_timings(&self) -> Vec<crate::TaskTiming> {
+        Vec::new()
     }
 
     fn is_main_thread(&self) -> bool {

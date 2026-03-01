@@ -28,7 +28,7 @@ use git::repository::{
     UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
-use git::status::{DiffStat, StageStatus};
+use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
@@ -41,7 +41,7 @@ use gpui::{
     WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
-use language::{Buffer, BufferEvent, File};
+use language::{Buffer, File};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -51,7 +51,6 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
 use project::{
     Fs, Project, ProjectPath,
-    buffer_store::BufferStoreEvent,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
@@ -123,13 +122,6 @@ actions!(
         Open,
     ]
 );
-
-/// Opens the Git Graph Tab at a specific commit.
-#[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
-#[action(namespace = git_graph)]
-pub struct OpenAtCommit {
-    pub sha: String,
-}
 
 fn prompt<T>(
     msg: &str,
@@ -652,8 +644,6 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
-    diff_stats: HashMap<RepoPath, DiffStat>,
-    diff_stats_task: Task<()>,
     _settings_subscription: Subscription,
 }
 
@@ -714,11 +704,9 @@ impl GitPanel {
 
             let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
             let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
-            let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 let tree_view = GitPanelSettings::get_global(cx).tree_view;
-                let diff_stats = GitPanelSettings::get_global(cx).diff_stats;
                 if tree_view != was_tree_view {
                     this.view_mode = GitPanelViewMode::from_settings(cx);
                 }
@@ -726,18 +714,8 @@ impl GitPanel {
                     this.bulk_staging.take();
                     this.update_visible_entries(window, cx);
                 }
-                if diff_stats != was_diff_stats {
-                    if diff_stats {
-                        this.fetch_diff_stats(cx);
-                    } else {
-                        this.diff_stats.clear();
-                        this.diff_stats_task = Task::ready(());
-                        cx.notify();
-                    }
-                }
                 was_sort_by_path = sort_by_path;
                 was_tree_view = tree_view;
-                was_diff_stats = diff_stats;
             })
             .detach();
 
@@ -792,33 +770,6 @@ impl GitPanel {
             )
             .detach();
 
-            let buffer_store = project.read(cx).buffer_store().clone();
-
-            for buffer in project.read(cx).opened_buffers(cx) {
-                cx.subscribe(&buffer, |this, _buffer, event, cx| {
-                    if matches!(event, BufferEvent::Saved) {
-                        if GitPanelSettings::get_global(cx).diff_stats {
-                            this.fetch_diff_stats(cx);
-                        }
-                    }
-                })
-                .detach();
-            }
-
-            cx.subscribe(&buffer_store, |_this, _store, event, cx| {
-                if let BufferStoreEvent::BufferAdded(buffer) = event {
-                    cx.subscribe(buffer, |this, _buffer, event, cx| {
-                        if matches!(event, BufferEvent::Saved) {
-                            if GitPanelSettings::get_global(cx).diff_stats {
-                                this.fetch_diff_stats(cx);
-                            }
-                        }
-                    })
-                    .detach();
-                }
-            })
-            .detach();
-
             let mut this = Self {
                 active_repository,
                 commit_editor,
@@ -859,8 +810,6 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
-                diff_stats: HashMap::default(),
-                diff_stats_task: Task::ready(()),
                 _settings_subscription,
             };
 
@@ -2786,7 +2735,6 @@ impl GitPanel {
                     temperature,
                     thinking_allowed: false,
                     thinking_effort: None,
-                    speed: None,
                 };
 
                 let stream = model.stream_completion_text(request, cx);
@@ -3307,8 +3255,10 @@ impl GitPanel {
         let mut new_co_authors = Vec::new();
         let project = self.project.read(cx);
 
-        let Some(room) =
-            call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
+        let Some(room) = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
         else {
             return Vec::default();
         };
@@ -3744,58 +3694,7 @@ impl GitPanel {
             editor.set_placeholder_text(&placeholder_text, window, cx)
         });
 
-        if GitPanelSettings::get_global(cx).diff_stats {
-            self.fetch_diff_stats(cx);
-        }
-
         cx.notify();
-    }
-
-    fn fetch_diff_stats(&mut self, cx: &mut Context<Self>) {
-        let Some(repo) = self.active_repository.clone() else {
-            self.diff_stats.clear();
-            return;
-        };
-
-        let unstaged_rx = repo.update(cx, |repo, cx| repo.diff_stat(DiffType::HeadToWorktree, cx));
-        let staged_rx = repo.update(cx, |repo, cx| repo.diff_stat(DiffType::HeadToIndex, cx));
-
-        self.diff_stats_task = cx.spawn(async move |this, cx| {
-            let (unstaged_result, staged_result) =
-                futures::future::join(unstaged_rx, staged_rx).await;
-
-            let mut combined = match unstaged_result {
-                Ok(Ok(stats)) => stats,
-                Ok(Err(err)) => {
-                    log::warn!("Failed to fetch unstaged diff stats: {err:?}");
-                    HashMap::default()
-                }
-                Err(_) => HashMap::default(),
-            };
-
-            let staged = match staged_result {
-                Ok(Ok(stats)) => Some(stats),
-                Ok(Err(err)) => {
-                    log::warn!("Failed to fetch staged diff stats: {err:?}");
-                    None
-                }
-                Err(_) => None,
-            };
-
-            if let Some(staged) = staged {
-                for (path, stat) in staged {
-                    let entry = combined.entry(path).or_default();
-                    entry.added += stat.added;
-                    entry.deleted += stat.deleted;
-                }
-            }
-
-            this.update(cx, |this, cx| {
-                this.diff_stats = combined;
-                cx.notify();
-            })
-            .ok();
-        });
     }
 
     fn header_state(&self, header_type: Section) -> ToggleState {
@@ -5209,8 +5108,6 @@ impl GitPanel {
                 }
             });
 
-        let id_for_diff_stat = id.clone();
-
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -5227,19 +5124,6 @@ impl GitPanel {
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
             .child(name_row)
-            .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
-                el.when_some(
-                    self.diff_stats.get(&entry.repo_path).copied(),
-                    move |this, stat| {
-                        let id = format!("diff-stat-{}", id_for_diff_stat);
-                        this.child(ui::DiffStat::new(
-                            id,
-                            stat.added as usize,
-                            stat.deleted as usize,
-                        ))
-                    },
-                )
-            })
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -5634,9 +5518,10 @@ impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
         let has_entries = !self.entries.is_empty();
-        let room = self.workspace.upgrade().and_then(|_workspace| {
-            call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
-        });
+        let room = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned());
 
         let has_write_access = self.has_write_access(cx);
 

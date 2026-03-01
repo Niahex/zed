@@ -21,8 +21,6 @@ actions!(
         RunInPlace,
         /// Clears all outputs in the REPL.
         ClearOutputs,
-        /// Clears the output of the cell at the current cursor position.
-        ClearCurrentOutput,
         /// Opens the REPL sessions panel.
         Sessions,
         /// Interrupts the currently running kernel.
@@ -83,15 +81,12 @@ pub fn init(cx: &mut App) {
             cx.defer_in(window, |editor, _window, cx| {
                 let project = editor.project().cloned();
 
-                let is_valid_project = project
+                let is_local_project = project
                     .as_ref()
-                    .map(|project| {
-                        let p = project.read(cx);
-                        !p.is_via_collab()
-                    })
+                    .map(|project| project.read(cx).is_local())
                     .unwrap_or(false);
 
-                if !is_valid_project {
+                if !is_local_project {
                     return;
                 }
 
@@ -106,7 +101,7 @@ pub fn init(cx: &mut App) {
                 let editor_handle = cx.entity().downgrade();
 
                 if let Some(language) = language
-                    && language.name() == "Python"
+                    && language.name() == "Python".into()
                     && let (Some(project_path), Some(project)) = (project_path, project)
                 {
                     let store = ReplStore::global(cx);

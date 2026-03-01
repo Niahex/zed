@@ -516,7 +516,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
     Box::new([
         SettingsPageItem::SettingItem(SettingItem {
             title: "API URL",
-            description: "The URL of your OpenAI-compatible server's completions API.",
+            description: "The base URL of your OpenAI-compatible server.",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings

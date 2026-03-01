@@ -1,6 +1,6 @@
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
@@ -87,31 +87,25 @@ impl AgentTool for DiagnosticsTool {
 
     fn run(
         self: Arc<Self>,
-        input: ToolInput<Self::Input>,
+        input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
-        let project = self.project.clone();
-        cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+    ) -> Task<Result<Self::Output>> {
+        match input.path {
+            Some(path) if !path.is_empty() => {
+                let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
+                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
+                };
 
-            match input.path {
-                Some(path) if !path.is_empty() => {
-                    let (_project_path, open_buffer_task) = project.update(cx, |project, cx| {
-                        let Some(project_path) = project.find_project_path(&path, cx) else {
-                            return Err(format!("Could not find path {path} in project"));
-                        };
-                        let task = project.open_buffer(project_path.clone(), cx);
-                        Ok((project_path, task))
-                    })?;
+                let open_buffer_task = self
+                    .project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
+                cx.spawn(async move |cx| {
                     let buffer = futures::select! {
-                        result = open_buffer_task.fuse() => result.map_err(|e| e.to_string())?,
+                        result = open_buffer_task.fuse() => result?,
                         _ = event_stream.cancelled_by_user().fuse() => {
-                            return Err("Diagnostics cancelled by user".to_string());
+                            anyhow::bail!("Diagnostics cancelled by user");
                         }
                     };
                     let mut output = String::new();
@@ -132,8 +126,7 @@ impl AgentTool for DiagnosticsTool {
                             severity,
                             range.start.row + 1,
                             entry.diagnostic.message
-                        )
-                        .ok();
+                        )?;
                     }
 
                     if output.is_empty() {
@@ -141,40 +134,36 @@ impl AgentTool for DiagnosticsTool {
                     } else {
                         Ok(output)
                     }
-                }
-                _ => {
-                    let (output, has_diagnostics) = project.read_with(cx, |project, cx| {
-                        let mut output = String::new();
-                        let mut has_diagnostics = false;
+                })
+            }
+            _ => {
+                let project = self.project.read(cx);
+                let mut output = String::new();
+                let mut has_diagnostics = false;
 
-                        for (project_path, _, summary) in project.diagnostic_summaries(true, cx) {
-                            if summary.error_count > 0 || summary.warning_count > 0 {
-                                let Some(worktree) =
-                                    project.worktree_for_id(project_path.worktree_id, cx)
-                                else {
-                                    continue;
-                                };
+                for (project_path, _, summary) in project.diagnostic_summaries(true, cx) {
+                    if summary.error_count > 0 || summary.warning_count > 0 {
+                        let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx)
+                        else {
+                            continue;
+                        };
 
-                                has_diagnostics = true;
-                                output.push_str(&format!(
-                                    "{}: {} error(s), {} warning(s)\n",
-                                    worktree.read(cx).absolutize(&project_path.path).display(),
-                                    summary.error_count,
-                                    summary.warning_count
-                                ));
-                            }
-                        }
-
-                        (output, has_diagnostics)
-                    });
-
-                    if has_diagnostics {
-                        Ok(output)
-                    } else {
-                        Ok("No errors or warnings found in the project.".into())
+                        has_diagnostics = true;
+                        output.push_str(&format!(
+                            "{}: {} error(s), {} warning(s)\n",
+                            worktree.read(cx).absolutize(&project_path.path).display(),
+                            summary.error_count,
+                            summary.warning_count
+                        ));
                     }
                 }
+
+                if has_diagnostics {
+                    Task::ready(Ok(output))
+                } else {
+                    Task::ready(Ok("No errors or warnings found in the project.".into()))
+                }
             }
-        })
+        }
     }
 }

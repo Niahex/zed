@@ -2,12 +2,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use editor::{Editor, EditorMode, MultiBuffer, SizingBehavior};
+use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
 use gpui::{
-    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, KeyContext,
-    RetainAllImageCache, StatefulInteractiveElement, Task, TextStyleRefinement, image_cache,
-    prelude::*,
+    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
+    StatefulInteractiveElement, Task, TextStyleRefinement, image_cache, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -358,10 +357,9 @@ impl MarkdownCell {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sizing_behavior: SizingBehavior::SizeByContent,
+                EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(1024),
                 },
                 multi_buffer,
                 None,
@@ -380,7 +378,6 @@ impl MarkdownCell {
 
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
-            editor.set_use_modal_editing(true);
             editor
         });
 
@@ -628,10 +625,9 @@ impl CodeCell {
 
         let editor_view = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sizing_behavior: SizingBehavior::SizeByContent,
+                EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(1024),
                 },
                 multi_buffer,
                 None,
@@ -650,7 +646,6 @@ impl CodeCell {
 
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
-            editor.set_use_modal_editing(true);
             editor
         });
 
@@ -705,10 +700,9 @@ impl CodeCell {
 
         let editor_view = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sizing_behavior: SizingBehavior::SizeByContent,
+                EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(1024),
                 },
                 multi_buffer,
                 None,
@@ -728,7 +722,6 @@ impl CodeCell {
             editor.set_text(source.clone(), window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
-            editor.set_use_modal_editing(true);
             editor
         });
 
@@ -1121,6 +1114,71 @@ impl Render for CodeCell {
                                             .child(name),
                                     )
                                 }),
+                        ),
+                    ),
+            )
+            // Output portion
+            .child(
+                h_flex()
+                    .w_full()
+                    .pr_6()
+                    .rounded_xs()
+                    .items_start()
+                    .gap(DynamicSpacing::Base08.rems(cx))
+                    .bg(self.selected_bg_color(window, cx))
+                    .child(self.gutter_output(window, cx))
+                    .child(
+                        div().py_1p5().w_full().child(
+                            div()
+                                .flex()
+                                .size_full()
+                                .flex_1()
+                                .py_3()
+                                .px_5()
+                                .rounded_lg()
+                                .border_1()
+                                .child(
+                                    div()
+                                        .id((ElementId::from(self.id.to_string()), "output-scroll"))
+                                        .w_full()
+                                        .when_some(output_max_width, |div, max_w| {
+                                            div.max_w(max_w).overflow_x_scroll()
+                                        })
+                                        .when_some(output_max_height, |div, max_h| {
+                                            div.max_h(max_h).overflow_y_scroll()
+                                        })
+                                        .children(self.outputs.iter().map(|output| {
+                                            let content = match output {
+                                                Output::Plain { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Markdown { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Stream { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Image { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Message(message) => Some(
+                                                    div().child(message.clone()).into_any_element(),
+                                                ),
+                                                Output::Table { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Json { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::ErrorOutput(error_view) => {
+                                                    error_view.render(window, cx)
+                                                }
+                                                Output::ClearOutputWaitMarker => None,
+                                            };
+
+                                            div().children(content)
+                                        })),
+                                ),
                         ),
                     ),
             )

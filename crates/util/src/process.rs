@@ -36,12 +36,7 @@ impl Child {
             .stdout(stdout)
             .stderr(stderr)
             .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn command {}",
-                    crate::redact::redact_command(&format!("{command:?}"))
-                )
-            })?;
+            .with_context(|| format!("failed to spawn command {command:?}"))?;
         Ok(Self { process })
     }
 
@@ -60,12 +55,7 @@ impl Child {
             .stdout(stdout)
             .stderr(stderr)
             .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn command {}",
-                    crate::redact::redact_command(&format!("{command:?}"))
-                )
-            })?;
+            .with_context(|| format!("failed to spawn command {command:?}"))?;
 
         Ok(Self { process })
     }

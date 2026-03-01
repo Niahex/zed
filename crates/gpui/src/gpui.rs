@@ -5,8 +5,7 @@
 #![allow(unused_mut)] // False positives in platform specific code
 
 extern crate self as gpui;
-#[doc(hidden)]
-pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
+
 #[macro_use]
 mod action;
 mod app;
@@ -33,11 +32,9 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
-/// Profiling utilities for task timing and thread performance tracking.
-pub mod profiler;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
-#[expect(missing_docs)]
-pub mod queue;
+mod profiler;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod queue;
 mod scene;
 mod shared_string;
 mod shared_uri;
@@ -87,7 +84,6 @@ pub use executor::*;
 pub use geometry::*;
 pub use global::*;
 pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
-pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
 pub use input::*;
 pub use inspector::*;
@@ -97,8 +93,8 @@ pub use keymap::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
-pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub(crate) use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
 pub use shared_string::*;
@@ -114,7 +110,7 @@ pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
-pub use util::{FutureExt, Timeout};
+pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
 

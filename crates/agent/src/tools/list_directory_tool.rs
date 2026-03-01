@@ -2,7 +2,7 @@ use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_project_path,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, Entity, SharedString, Task};
@@ -146,39 +146,34 @@ impl AgentTool for ListDirectoryTool {
 
     fn run(
         self: Arc<Self>,
-        input: ToolInput<Self::Input>,
+        input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
+    ) -> Task<Result<Self::Output>> {
+        // Sometimes models will return these even though we tell it to give a path and not a glob.
+        // When this happens, just list the root worktree directories.
+        if matches!(input.path.as_str(), "." | "" | "./" | "*") {
+            let output = self
+                .project
+                .read(cx)
+                .worktrees(cx)
+                .filter_map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    let root_entry = worktree.root_entry()?;
+                    if root_entry.is_dir() {
+                        Some(root_entry.path.display(worktree.path_style()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            return Task::ready(Ok(output));
+        }
+
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
-
-            // Sometimes models will return these even though we tell it to give a path and not a glob.
-            // When this happens, just list the root worktree directories.
-            if matches!(input.path.as_str(), "." | "" | "./" | "*") {
-                let output = project.read_with(cx, |project, cx| {
-                    project
-                        .worktrees(cx)
-                        .filter_map(|worktree| {
-                            let worktree = worktree.read(cx);
-                            let root_entry = worktree.root_entry()?;
-                            if root_entry.is_dir() {
-                                Some(root_entry.path.display(worktree.path_style()))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                });
-
-                return Ok(output);
-            }
-
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -192,7 +187,7 @@ impl AgentTool for ListDirectoryTool {
                             canonical_target,
                         } => (project_path, Some(canonical_target)),
                     })
-                }).map_err(|e| e.to_string())?;
+                })?;
 
             // Check settings exclusions synchronously
             project.read_with(cx, |project, cx| {
@@ -241,7 +236,7 @@ impl AgentTool for ListDirectoryTool {
                 }
 
                 anyhow::Ok(())
-            }).map_err(|e| e.to_string())?;
+            })?;
 
             if let Some(canonical_target) = &symlink_canonical_target {
                 let authorize = cx.update(|cx| {
@@ -253,13 +248,13 @@ impl AgentTool for ListDirectoryTool {
                         cx,
                     )
                 });
-                authorize.await.map_err(|e| e.to_string())?;
+                authorize.await?;
             }
 
             let list_path = input.path;
             cx.update(|cx| {
                 Self::build_directory_output(&project, &project_path, &list_path, cx)
-            }).map_err(|e| e.to_string())
+            })
         })
     }
 }
@@ -328,13 +323,7 @@ mod tests {
             path: "project".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
         assert_eq!(
@@ -355,13 +344,7 @@ mod tests {
             path: "project/src".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
         assert_eq!(
@@ -382,13 +365,7 @@ mod tests {
             path: "project/tests".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
         assert!(!output.contains("# Folders:"));
@@ -416,13 +393,7 @@ mod tests {
             path: "project/empty_dir".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
         assert_eq!(output, "project/empty_dir is empty.\n");
@@ -449,30 +420,23 @@ mod tests {
             path: "project/nonexistent".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await;
-        assert!(output.unwrap_err().contains("Path not found"));
+        assert!(output.unwrap_err().to_string().contains("Path not found"));
 
         // Test trying to list a file instead of directory
         let input = ListDirectoryToolInput {
             path: "project/file.txt".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.run(input, ToolCallEventStream::test().0, cx))
             .await;
-        assert!(output.unwrap_err().contains("is not a directory"));
+        assert!(
+            output
+                .unwrap_err()
+                .to_string()
+                .contains("is not a directory")
+        );
     }
 
     #[gpui::test]
@@ -534,13 +498,7 @@ mod tests {
             path: "project".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
 
@@ -567,16 +525,13 @@ mod tests {
             path: "project/.secretdir".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await;
         assert!(
-            output.unwrap_err().contains("file_scan_exclusions"),
+            output
+                .unwrap_err()
+                .to_string()
+                .contains("file_scan_exclusions"),
             "Error should mention file_scan_exclusions"
         );
 
@@ -585,13 +540,7 @@ mod tests {
             path: "project/visible_dir".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
 
@@ -696,13 +645,7 @@ mod tests {
             path: "worktree1/src".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
         assert!(output.contains("main.rs"), "Should list main.rs");
@@ -720,13 +663,7 @@ mod tests {
             path: "worktree1/tests".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
         assert!(output.contains("test.rs"), "Should list test.rs");
@@ -740,13 +677,7 @@ mod tests {
             path: "worktree2/lib".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
         assert!(output.contains("public.js"), "Should list public.js");
@@ -764,13 +695,7 @@ mod tests {
             path: "worktree2/docs".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await
             .unwrap();
         assert!(output.contains("README.md"), "Should list README.md");
@@ -784,15 +709,14 @@ mod tests {
             path: "worktree1/src/secret.rs".into(),
         };
         let output = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(input),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
+            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
             .await;
-        assert!(output.unwrap_err().contains("Cannot list directory"),);
+        assert!(
+            output
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot list directory"),
+        );
     }
 
     #[gpui::test]
@@ -832,9 +756,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ToolInput::resolved(ListDirectoryToolInput {
+                ListDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                }),
+                },
                 event_stream,
                 cx,
             )
@@ -893,9 +817,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ToolInput::resolved(ListDirectoryToolInput {
+                ListDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                }),
+                },
                 event_stream,
                 cx,
             )
@@ -960,9 +884,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ToolInput::resolved(ListDirectoryToolInput {
+                    ListDirectoryToolInput {
                         path: "project/link_to_external".into(),
-                    }),
+                    },
                     event_stream,
                     cx,
                 )
@@ -973,7 +897,7 @@ mod tests {
             result.is_err(),
             "Expected list_directory to fail on private path"
         );
-        let error = result.unwrap_err();
+        let error = result.unwrap_err().to_string();
         assert!(
             error.contains("private"),
             "Expected private path validation error, got: {error}"
@@ -1013,9 +937,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ToolInput::resolved(ListDirectoryToolInput {
+                    ListDirectoryToolInput {
                         path: "project/src".into(),
-                    }),
+                    },
                     event_stream,
                     cx,
                 )
@@ -1070,9 +994,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ToolInput::resolved(ListDirectoryToolInput {
+                    ListDirectoryToolInput {
                         path: "project/link_dir".into(),
-                    }),
+                    },
                     event_stream,
                     cx,
                 )

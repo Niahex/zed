@@ -14,10 +14,9 @@ use std::{
 pub const SMOOTH_SVG_SCALE_FACTOR: f32 = 2.;
 
 #[derive(Clone, PartialEq, Hash, Eq)]
-#[expect(missing_docs)]
-pub struct RenderSvgParams {
-    pub path: SharedString,
-    pub size: Size<DevicePixels>,
+pub(crate) struct RenderSvgParams {
+    pub(crate) path: SharedString,
+    pub(crate) size: Size<DevicePixels>,
 }
 
 #[derive(Clone)]

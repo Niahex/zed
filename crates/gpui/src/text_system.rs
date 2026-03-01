@@ -41,15 +41,14 @@ pub struct FontId(pub usize);
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
 
-/// Number of subpixel glyph variants along the X axis.
-pub const SUBPIXEL_VARIANTS_X: u8 = 4;
+pub(crate) const SUBPIXEL_VARIANTS_X: u8 = 4;
 
-/// Number of subpixel glyph variants along the Y axis.
-pub const SUBPIXEL_VARIANTS_Y: u8 = if cfg!(target_os = "windows") || cfg!(target_os = "linux") {
-    1
-} else {
-    SUBPIXEL_VARIANTS_X
-};
+pub(crate) const SUBPIXEL_VARIANTS_Y: u8 =
+    if cfg!(target_os = "windows") || cfg!(target_os = "linux") {
+        1
+    } else {
+        SUBPIXEL_VARIANTS_X
+    };
 
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
@@ -800,18 +799,17 @@ impl TextRun {
 /// An identifier for a specific glyph, as returned by [`WindowTextSystem::layout_line`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
-pub struct GlyphId(pub u32);
+pub struct GlyphId(pub(crate) u32);
 
 #[derive(Clone, Debug, PartialEq)]
-#[expect(missing_docs)]
-pub struct RenderGlyphParams {
-    pub font_id: FontId,
-    pub glyph_id: GlyphId,
-    pub font_size: Pixels,
-    pub subpixel_variant: Point<u8>,
-    pub scale_factor: f32,
-    pub is_emoji: bool,
-    pub subpixel_rendering: bool,
+pub(crate) struct RenderGlyphParams {
+    pub(crate) font_id: FontId,
+    pub(crate) glyph_id: GlyphId,
+    pub(crate) font_size: Pixels,
+    pub(crate) subpixel_variant: Point<u8>,
+    pub(crate) scale_factor: f32,
+    pub(crate) is_emoji: bool,
+    pub(crate) subpixel_rendering: bool,
 }
 
 impl Eq for RenderGlyphParams {}
@@ -886,32 +884,32 @@ impl Font {
 pub struct FontMetrics {
     /// The number of font units that make up the "em square",
     /// a scalable grid for determining the size of a typeface.
-    pub units_per_em: u32,
+    pub(crate) units_per_em: u32,
 
     /// The vertical distance from the baseline of the font to the top of the glyph covers.
-    pub ascent: f32,
+    pub(crate) ascent: f32,
 
     /// The vertical distance from the baseline of the font to the bottom of the glyph covers.
-    pub descent: f32,
+    pub(crate) descent: f32,
 
     /// The recommended additional space to add between lines of type.
-    pub line_gap: f32,
+    pub(crate) line_gap: f32,
 
     /// The suggested position of the underline.
-    pub underline_position: f32,
+    pub(crate) underline_position: f32,
 
     /// The suggested thickness of the underline.
-    pub underline_thickness: f32,
+    pub(crate) underline_thickness: f32,
 
     /// The height of a capital letter measured from the baseline of the font.
-    pub cap_height: f32,
+    pub(crate) cap_height: f32,
 
     /// The height of a lowercase x.
-    pub x_height: f32,
+    pub(crate) x_height: f32,
 
     /// The outer limits of the area that the font covers.
     /// Corresponds to the xMin / xMax / yMin / yMax values in the OpenType `head` table
-    pub bounding_box: Bounds<f32>,
+    pub(crate) bounding_box: Bounds<f32>,
 }
 
 impl FontMetrics {
@@ -956,9 +954,8 @@ impl FontMetrics {
     }
 }
 
-/// Maps well-known virtual font names to their concrete equivalents.
 #[allow(unused)]
-pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
+pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
     // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
     // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
     // and so retained here for backward compatibility.
@@ -970,9 +967,8 @@ pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
     }
 }
 
-/// Like [`font_name_with_fallbacks`] but accepts and returns [`SharedString`] references.
 #[allow(unused)]
-pub fn font_name_with_fallbacks_shared<'a>(
+pub(crate) fn font_name_with_fallbacks_shared<'a>(
     name: &'a SharedString,
     system: &'a SharedString,
 ) -> &'a SharedString {

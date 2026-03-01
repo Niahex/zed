@@ -16,8 +16,7 @@ use ui::SharedString;
 use util::markdown::{MarkdownEscaped, MarkdownInlineCode};
 
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
-    decide_permission_from_settings,
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
 };
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -142,60 +141,49 @@ impl AgentTool for FetchTool {
 
     fn run(
         self: Arc<Self>,
-        input: ToolInput<Self::Input>,
+        input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
-        let http_client = self.http_client.clone();
-        cx.spawn(async move |cx| {
-            let input: FetchToolInput = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+    ) -> Task<Result<Self::Output>> {
+        let settings = AgentSettings::get_global(cx);
+        let decision =
+            decide_permission_from_settings(Self::NAME, std::slice::from_ref(&input.url), settings);
 
-            let decision = cx.update(|cx| {
-                decide_permission_from_settings(
-                    Self::NAME,
-                    std::slice::from_ref(&input.url),
-                    AgentSettings::get_global(cx),
-                )
-            });
+        let authorize = match decision {
+            ToolPermissionDecision::Allow => None,
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.url.clone()]);
+                Some(event_stream.authorize(
+                    format!("Fetch {}", MarkdownInlineCode(&input.url)),
+                    context,
+                    cx,
+                ))
+            }
+        };
 
-            let authorize = match decision {
-                ToolPermissionDecision::Allow => None,
-                ToolPermissionDecision::Deny(reason) => {
-                    return Err(reason);
+        let fetch_task = cx.background_spawn({
+            let http_client = self.http_client.clone();
+            async move {
+                if let Some(authorize) = authorize {
+                    authorize.await?;
                 }
-                ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
-                    let context =
-                        crate::ToolPermissionContext::new(Self::NAME, vec![input.url.clone()]);
-                    event_stream.authorize(
-                        format!("Fetch {}", MarkdownInlineCode(&input.url)),
-                        context,
-                        cx,
-                    )
-                })),
-            };
+                Self::build_message(http_client, &input.url).await
+            }
+        });
 
-            let fetch_task = cx.background_spawn({
-                let http_client = http_client.clone();
-                let url = input.url.clone();
-                async move {
-                    if let Some(authorize) = authorize {
-                        authorize.await?;
-                    }
-                    Self::build_message(http_client, &url).await
-                }
-            });
-
+        cx.foreground_executor().spawn(async move {
             let text = futures::select! {
-                result = fetch_task.fuse() => result.map_err(|e| e.to_string())?,
+                result = fetch_task.fuse() => result?,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err("Fetch cancelled by user".to_string());
+                    anyhow::bail!("Fetch cancelled by user");
                 }
             };
             if text.trim().is_empty() {
-                return Err("no textual content found".to_string());
+                bail!("no textual content found");
             }
             Ok(text)
         })

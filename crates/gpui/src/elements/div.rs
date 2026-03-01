@@ -26,7 +26,6 @@ use crate::{
     size,
 };
 use collections::HashMap;
-use gpui_util::ResultExt;
 use refineable::Refineable;
 use smallvec::SmallVec;
 use stacksafe::{StackSafe, stacksafe};
@@ -41,6 +40,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use util::ResultExt;
 
 use super::ImageCacheProvider;
 

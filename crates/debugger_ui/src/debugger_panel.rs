@@ -35,7 +35,6 @@ use tree_sitter::{Query, StreamingIterator as _};
 use ui::{
     ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
 };
-use util::redact::redact_command;
 use util::rel_path::RelPath;
 use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
@@ -44,7 +43,7 @@ use workspace::{
     Item, Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
-use zed_actions::debug_panel::ToggleFocus;
+use zed_actions::ToggleFocus;
 
 pub struct DebuggerHistoryFeatureFlag;
 
@@ -276,13 +275,12 @@ impl DebugPanel {
 
             async move |_, cx| {
                 if let Err(error) = task.await {
-                    let redacted_error = redact_command(&format!("{error:#}"));
-                    log::error!("{redacted_error}");
+                    log::error!("{error:#}");
                     session
                         .update(cx, |session, cx| {
                             session
                                 .console_output(cx)
-                                .unbounded_send(format!("error: {:#}", redacted_error))
+                                .unbounded_send(format!("error: {:#}", error))
                                 .ok();
                             session.shutdown(cx)
                         })
@@ -517,9 +515,7 @@ impl DebugPanel {
             }
             session.update(cx, |session, cx| session.shutdown(cx));
             this.update(cx, |this, cx| {
-                this.retain_sessions(&|other: &Entity<DebugSession>| {
-                    entity_id != other.entity_id()
-                });
+                this.retain_sessions(|other| entity_id != other.entity_id());
                 if let Some(active_session_id) = this
                     .active_session
                     .as_ref()
@@ -1333,7 +1329,7 @@ impl DebugPanel {
         None
     }
 
-    fn retain_sessions(&mut self, keep: &dyn Fn(&Entity<DebugSession>) -> bool) {
+    fn retain_sessions(&mut self, keep: impl Fn(&Entity<DebugSession>) -> bool) {
         self.sessions_with_children
             .retain(|session, _| keep(session));
         for children in self.sessions_with_children.values_mut() {
@@ -1468,7 +1464,7 @@ async fn register_session_inner(
             .keys()
             .find(|p| Some(p.read(cx).session_id(cx)) == session.read(cx).parent_id(cx))
             .cloned();
-        this.retain_sessions(&|session: &Entity<DebugSession>| {
+        this.retain_sessions(|session| {
             !session
                 .read(cx)
                 .running_state()

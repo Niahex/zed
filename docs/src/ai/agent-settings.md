@@ -242,20 +242,8 @@ Patterns are **case-insensitive** by default. To make a pattern case-sensitive, 
 
 ```json [settings]
 {
-  "agent": {
-    "tool_permissions": {
-      "tools": {
-        "edit_file": {
-          "always_deny": [
-            {
-              "pattern": "^Makefile$",
-              "case_sensitive": true
-            }
-          ]
-        }
-      }
-    }
-  }
+  "pattern": "^Makefile$",
+  "case_sensitive": true
 }
 ```
 
@@ -290,10 +278,10 @@ See the [Tool Permissions](./tool-permissions.md) documentation for more example
 
 > **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation for edits and tool calls.
 
-### Edit Display Mode
+### Single-file Review
 
 Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
-The default value is `false`.
+The default value is `true`.
 
 ```json [settings]
 {
@@ -302,6 +290,8 @@ The default value is `false`.
   }
 }
 ```
+
+When set to `false`, these controls are only available in the multibuffer review tab.
 
 ### Sound Notification
 

@@ -5,7 +5,6 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
     resolve_active_repository,
 };
-use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
@@ -15,7 +14,6 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
-use git::repository::DiffType;
 
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
@@ -40,7 +38,7 @@ use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{DiffStat, Divider, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
@@ -49,7 +47,6 @@ use workspace::{
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
-use zed_actions::agent::ReviewBranchDiff;
 use ztracing::instrument;
 
 actions!(
@@ -62,8 +59,6 @@ actions!(
         /// Shows the diff between the working directory and your default
         /// branch (typically main or master).
         BranchDiff,
-        /// Opens a new agent thread with the branch diff for review.
-        ReviewDiff,
         LeaderAndFollower,
     ]
 );
@@ -145,52 +140,6 @@ impl ProjectDiff {
                 anyhow::Ok(())
             })
             .detach_and_notify_err(workspace_weak, window, cx);
-    }
-
-    fn review_diff(&mut self, _: &ReviewDiff, window: &mut Window, cx: &mut Context<Self>) {
-        let diff_base = self.diff_base(cx).clone();
-        let DiffBase::Merge { base_ref } = diff_base else {
-            return;
-        };
-
-        let Some(repo) = self.branch_diff.read(cx).repo().cloned() else {
-            return;
-        };
-
-        let diff_receiver = repo.update(cx, |repo, cx| {
-            repo.diff(
-                DiffType::MergeBase {
-                    base_ref: base_ref.clone(),
-                },
-                cx,
-            )
-        });
-
-        let workspace = self.workspace.clone();
-
-        window
-            .spawn(cx, {
-                let workspace = workspace.clone();
-                async move |cx| {
-                    let diff_text = diff_receiver.await??;
-
-                    if let Some(workspace) = workspace.upgrade() {
-                        workspace.update_in(cx, |_workspace, window, cx| {
-                            window.dispatch_action(
-                                ReviewBranchDiff {
-                                    diff_text: diff_text.into(),
-                                    base_ref: base_ref.to_string().into(),
-                                }
-                                .boxed_clone(),
-                                cx,
-                            );
-                        })?;
-                    }
-
-                    anyhow::Ok(())
-                }
-            })
-            .detach_and_notify_err(workspace, window, cx);
     }
 
     pub fn deploy_at(
@@ -539,41 +488,6 @@ impl ProjectDiff {
         } else {
             self.pending_scroll = Some(path_key);
         }
-    }
-
-    pub fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
-        let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let mut total_additions = 0u32;
-        let mut total_deletions = 0u32;
-
-        let mut seen_buffers = HashSet::default();
-        for (_, buffer, _) in snapshot.excerpts() {
-            let buffer_id = buffer.remote_id();
-            if !seen_buffers.insert(buffer_id) {
-                continue;
-            }
-
-            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
-                continue;
-            };
-
-            let base_text = diff.base_text();
-
-            for hunk in diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer) {
-                let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
-                total_additions += added_rows;
-
-                let base_start = base_text
-                    .offset_to_point(hunk.diff_base_byte_range.start)
-                    .row;
-                let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end).row;
-                let deleted_rows = base_end.saturating_sub(base_start);
-
-                total_deletions += deleted_rows;
-            }
-        }
-
-        (total_additions, total_deletions)
     }
 
     /// Returns the total count of review comments across all hunks/files.
@@ -972,11 +886,8 @@ impl Item for ProjectDiff {
         })
     }
 
-    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        match self.diff_base(cx) {
-            DiffBase::Head => Some("Project Diff".into()),
-            DiffBase::Merge { .. } => Some("Branch Diff".into()),
-        }
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+        Some("Project Diff".into())
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
@@ -1131,14 +1042,10 @@ impl Item for ProjectDiff {
 impl Render for ProjectDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
-        let is_branch_diff_view = matches!(self.diff_base(cx), DiffBase::Merge { .. });
 
         div()
             .track_focus(&self.focus_handle)
             .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
-            .when(is_branch_diff_view, |this| {
-                this.on_action(cx.listener(Self::review_diff))
-            })
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
@@ -1604,7 +1511,7 @@ pub struct BranchDiffToolbar {
 }
 
 impl BranchDiffToolbar {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
+    pub fn new(_: &mut Context<Self>) -> Self {
         Self { project_diff: None }
     }
 
@@ -1659,12 +1566,6 @@ impl Render for BranchDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
-        let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
-
-        let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
-        let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
-
-        let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
         h_group_xl()
             .my_neg_1()
@@ -1672,39 +1573,8 @@ impl Render for BranchDiffToolbar {
             .items_center()
             .flex_wrap()
             .justify_end()
-            .gap_2()
-            .when(!is_multibuffer_empty, |this| {
-                this.child(DiffStat::new(
-                    "branch-diff-stat",
-                    additions as usize,
-                    deletions as usize,
-                ))
-            })
-            .when(show_review_button, |this| {
-                let focus_handle = focus_handle.clone();
-                this.child(Divider::vertical()).child(
-                    Button::new("review-diff", "Review Diff")
-                        .icon(IconName::ZedAssistant)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .key_binding(KeyBinding::for_action_in(&ReviewDiff, &focus_handle, cx))
-                        .tooltip(move |_, cx| {
-                            Tooltip::with_meta_in(
-                                "Review Diff",
-                                Some(&ReviewDiff),
-                                "Send this diff for your last agent to review.",
-                                &focus_handle,
-                                cx,
-                            )
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.dispatch_action(&ReviewDiff, window, cx);
-                        })),
-                )
-            })
-            .when(review_count > 0, |this| {
-                this.child(vertical_divider()).child(
+            .when(review_count > 0, |el| {
+                el.child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.dispatch_action(&SendReviewToAgent, window, cx)

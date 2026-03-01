@@ -322,8 +322,6 @@ messages!(
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
     (GitDiffResponse, Background),
-    (GitDiffStat, Background),
-    (GitDiffStatResponse, Background),
     (GitInit, Background),
     (GetDebugAdapterBinary, Background),
     (DebugAdapterBinary, Background),
@@ -361,11 +359,6 @@ messages!(
     (GetSharedAgentThreadResponse, Foreground),
     (FindSearchCandidatesChunk, Background),
     (FindSearchCandidatesCancelled, Background),
-    (SpawnKernel, Background),
-    (SpawnKernelResponse, Background),
-    (KillKernel, Background),
-    (GetRemoteProfilingData, Background),
-    (GetRemoteProfilingDataResponse, Background),
 );
 
 request_messages!(
@@ -541,7 +534,6 @@ request_messages!(
     (GitRenameBranch, Ack),
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
-    (GitDiffStat, GitDiffStatResponse),
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
     (GetDebugAdapterBinary, DebugAdapterBinary),
@@ -563,9 +555,6 @@ request_messages!(
     (TrustWorktrees, Ack),
     (RestrictWorktrees, Ack),
     (FindSearchCandidatesChunk, Ack),
-    (SpawnKernel, SpawnKernelResponse),
-    (KillKernel, Ack),
-    (GetRemoteProfilingData, GetRemoteProfilingDataResponse),
 );
 
 lsp_messages!(
@@ -632,8 +621,6 @@ entity_messages!(
     SemanticTokens,
     JoinProject,
     LeaveProject,
-    SpawnKernel,
-    KillKernel,
     LinkedEditingRange,
     LoadCommitDiff,
     LspQuery,
@@ -730,7 +717,6 @@ entity_messages!(
     GitRemoveRemote,
     CheckForPushedCommits,
     GitDiff,
-    GitDiffStat,
     GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
@@ -755,8 +741,7 @@ entity_messages!(
     RestrictWorktrees,
     FindSearchCandidatesChunk,
     FindSearchCandidatesCancelled,
-    DownloadFileByPath,
-    GetRemoteProfilingData
+    DownloadFileByPath
 );
 
 entity_messages!(

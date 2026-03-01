@@ -1,3 +1,4 @@
+mod component_preview_example;
 mod persistence;
 
 use client::UserStore;
@@ -18,6 +19,9 @@ use workspace::AppState;
 use workspace::{
     Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
 };
+
+#[allow(unused_imports)]
+pub use component_preview_example::*;
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);
@@ -81,13 +85,13 @@ impl From<SharedString> for PreviewEntry {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub enum PreviewPage {
+enum PreviewPage {
     #[default]
     AllComponents,
     Component(ComponentId),
 }
 
-pub struct ComponentPreview {
+struct ComponentPreview {
     active_page: PreviewPage,
     reset_key: usize,
     component_list: ListState,

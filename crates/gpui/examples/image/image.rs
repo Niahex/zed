@@ -1,16 +1,13 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::{
-    App, AppContext, AssetSource, Bounds, Context, ImageSource, KeyBinding, Menu, MenuItem, Point,
-    SharedString, SharedUri, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
-    img, prelude::*, px, rgb, size,
+    App, AppContext, Application, AssetSource, Bounds, Context, ImageSource, KeyBinding, Menu,
+    MenuItem, Point, SharedString, SharedUri, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    actions, div, img, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
 use reqwest_client::ReqwestClient;
 
 struct Assets {
@@ -148,10 +145,12 @@ impl Render for ImageShowcase {
 
 actions!(image, [Quit]);
 
-fn run_example() {
+fn main() {
+    env_logger::init();
+
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    application()
+    Application::new()
         .with_assets(Assets {
             base: manifest_dir.join("examples"),
         })
@@ -192,17 +191,4 @@ fn run_example() {
             })
             .unwrap();
         });
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn main() {
-    env_logger::init();
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
-    run_example();
 }

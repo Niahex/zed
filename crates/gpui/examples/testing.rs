@@ -1,4 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
 //! Example demonstrating GPUI's testing infrastructure.
 //!
 //! When run normally, this displays an interactive counter window.
@@ -8,10 +7,9 @@
 //! Run tests:   cargo test -p gpui --example testing --features test-support
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, Render, Task, Window, WindowBounds,
+    App, Application, Bounds, Context, FocusHandle, Focusable, Render, Task, Window, WindowBounds,
     WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
 
 actions!(counter, [Increment, Decrement]);
 
@@ -177,8 +175,8 @@ impl Render for Counter {
     }
 }
 
-fn run_example() {
-    application().run(|cx: &mut App| {
+fn main() {
+    Application::new().run(|cx: &mut App| {
         cx.bind_keys([
             gpui::KeyBinding::new("up", Increment, Some("Counter")),
             gpui::KeyBinding::new("down", Decrement, Some("Counter")),
@@ -198,18 +196,6 @@ fn run_example() {
         )
         .unwrap();
     });
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
-    run_example();
 }
 
 #[cfg(test)]

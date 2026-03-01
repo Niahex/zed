@@ -19,7 +19,6 @@ pub(crate) struct TestWindowState {
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
     platform: Weak<TestPlatform>,
-    // TODO: Replace with `Rc`
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
@@ -33,7 +32,7 @@ pub(crate) struct TestWindowState {
 }
 
 #[derive(Clone)]
-pub struct TestWindow(pub(crate) Rc<Mutex<TestWindowState>>);
+pub(crate) struct TestWindow(pub(crate) Rc<Mutex<TestWindowState>>);
 
 impl HasWindowHandle for TestWindow {
     fn window_handle(
@@ -52,7 +51,7 @@ impl HasDisplayHandle for TestWindow {
 }
 
 impl TestWindow {
-    pub(crate) fn new(
+    pub fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
         platform: Weak<TestPlatform>,

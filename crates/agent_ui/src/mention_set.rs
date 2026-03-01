@@ -149,8 +149,7 @@ impl MentionSet {
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
             MentionUri::PastedImage
             | MentionUri::Selection { .. }
-            | MentionUri::TerminalSelection { .. }
-            | MentionUri::GitDiff { .. } => {
+            | MentionUri::TerminalSelection { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
@@ -290,10 +289,6 @@ impl MentionSet {
             MentionUri::TerminalSelection { .. } => {
                 debug_panic!("unexpected terminal URI");
                 Task::ready(Err(anyhow!("unexpected terminal URI")))
-            }
-            MentionUri::GitDiff { .. } => {
-                debug_panic!("unexpected git diff URI");
-                Task::ready(Err(anyhow!("unexpected git diff URI")))
             }
         };
         let task = cx
@@ -547,9 +542,9 @@ impl MentionSet {
             None,
             None,
         );
-        let connection = server.connect(delegate, cx);
+        let connection = server.connect(None, delegate, cx);
         cx.spawn(async move |_, cx| {
-            let agent = connection.await?;
+            let (agent, _) = connection.await?;
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0

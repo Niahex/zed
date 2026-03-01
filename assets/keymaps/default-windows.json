@@ -123,7 +123,6 @@
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "git::Blame",
       "alt-g m": "git::OpenModifiedFiles",
-      "alt-g r": "git::ReviewDiff",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-alt-e": "editor::ToggleEditPrediction",
@@ -318,7 +317,6 @@
       "ctrl-shift-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
       "shift-alt-z": "agent::RejectAll",
-      "shift-alt-u": "agent::UndoLastReject",
       "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-shift-enter": "agent::SendImmediately",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
@@ -335,7 +333,6 @@
       "ctrl-alt-k": "agent::ToggleThinkingMode",
       "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
-      "ctrl-alt-.": "agent::ToggleFastMode",
     },
   },
   {

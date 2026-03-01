@@ -397,7 +397,10 @@ impl TerminalPanel {
                             };
                             panel
                                 .update_in(cx, |panel, window, cx| {
-                                    panel.center.split(&pane, &new_pane, direction, cx);
+                                    panel
+                                        .center
+                                        .split(&pane, &new_pane, direction, cx)
+                                        .log_err();
                                     window.focus(&new_pane.focus_handle(cx), cx);
                                 })
                                 .ok();
@@ -421,7 +424,7 @@ impl TerminalPanel {
                         new_pane.update(cx, |pane, cx| {
                             pane.add_item(item, true, true, None, window, cx);
                         });
-                        self.center.split(&pane, &new_pane, direction, cx);
+                        self.center.split(&pane, &new_pane, direction, cx).log_err();
                         window.focus(&new_pane.focus_handle(cx), cx);
                     }
                 };
@@ -1300,10 +1303,14 @@ pub fn new_terminal_pane(
                                             &new_pane,
                                             split_direction,
                                             cx,
-                                        );
-                                        new_pane
+                                        )?;
+                                        anyhow::Ok(new_pane)
                                     })
                                 else {
+                                    return;
+                                };
+
+                                let Some(new_pane) = new_pane.log_err() else {
                                     return;
                                 };
 
@@ -1562,12 +1569,15 @@ impl Render for TerminalPanel {
                                     _ = terminal_panel.update_in(
                                         cx,
                                         |terminal_panel, window, cx| {
-                                            terminal_panel.center.split(
-                                                &terminal_panel.active_pane,
-                                                &new_pane,
-                                                SplitDirection::Right,
-                                                cx,
-                                            );
+                                            terminal_panel
+                                                .center
+                                                .split(
+                                                    &terminal_panel.active_pane,
+                                                    &new_pane,
+                                                    SplitDirection::Right,
+                                                    cx,
+                                                )
+                                                .log_err();
                                             let new_pane = new_pane.read(cx);
                                             window.focus(&new_pane.focus_handle(cx), cx);
                                         },

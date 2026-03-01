@@ -111,6 +111,10 @@ impl LanguageModelCompletionEvent {
             }
             CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
             CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
+            CompletionRequestStatus::UsageUpdated { .. }
+            | CompletionRequestStatus::ToolUseLimitReached => Err(
+                LanguageModelCompletionError::Other(anyhow!("Unexpected status: {status:?}")),
+            ),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -610,10 +614,6 @@ pub trait LanguageModel: Send + Sync {
 
     /// Whether this model supports thinking.
     fn supports_thinking(&self) -> bool {
-        false
-    }
-
-    fn supports_fast_mode(&self) -> bool {
         false
     }
 

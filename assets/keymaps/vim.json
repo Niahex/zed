@@ -1110,12 +1110,4 @@
       "shift-g": "menu::SelectLast",
     },
   },
-  {
-    "context": "NotebookEditor > Editor && VimControl && vim_mode == normal",
-
-    "bindings": {
-      "j": "notebook::NotebookMoveDown",
-      "k": "notebook::NotebookMoveUp",
-    },
-  },
 ]

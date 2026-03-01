@@ -1,4 +1,3 @@
-use scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
     cell::{BorrowMutError, Cell, Ref, RefCell, RefMut},
@@ -8,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{Arc, atomic::Ordering::SeqCst},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -26,11 +25,11 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
-use gpui_util::{ResultExt, debug_panic};
 use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
+use util::{ResultExt, debug_panic};
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test_context::*;
 
@@ -47,7 +46,7 @@ use crate::{
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
     ThermalState, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
-    hash, init_app_menus,
+    current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -133,10 +132,25 @@ pub struct Application(Rc<AppCell>);
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
 impl Application {
-    /// Builds an app with a caller-provided platform implementation.
-    pub fn with_platform(platform: Rc<dyn Platform>) -> Self {
+    /// Builds an app with the given asset source.
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        log::info!("GPUI was compiled in test mode");
+
         Self(App::new_app(
-            platform,
+            current_platform(false),
+            Arc::new(()),
+            Arc::new(NullHttpClient),
+        ))
+    }
+
+    /// Build an app in headless mode. This prevents opening windows,
+    /// but makes it possible to run an application in an context like
+    /// SSH, where GUI applications are not allowed.
+    pub fn headless() -> Self {
+        Self(App::new_app(
+            current_platform(true),
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -855,12 +869,10 @@ impl App {
         &mut self,
         callback: impl FnOnce(&mut App) -> R,
     ) -> (R, FxHashSet<EntityId>) {
-        let accessed_entities_start = self.entities.accessed_entities.get_mut().clone();
+        let accessed_entities_start = self.entities.accessed_entities.borrow().clone();
         let result = callback(self);
-        let entities_accessed_in_callback = self
-            .entities
-            .accessed_entities
-            .get_mut()
+        let accessed_entities_end = self.entities.accessed_entities.borrow().clone();
+        let entities_accessed_in_callback = accessed_entities_end
             .difference(&accessed_entities_start)
             .copied()
             .collect::<FxHashSet<EntityId>>();

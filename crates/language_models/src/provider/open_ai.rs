@@ -309,7 +309,6 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointOne
             | Model::FivePointTwo
             | Model::FivePointTwoCodex
-            | Model::FivePointThreeCodex
             | Model::O1
             | Model::O3 => true,
             Model::ThreePointFiveTurbo
@@ -555,7 +554,6 @@ pub fn into_open_ai_response(
         temperature,
         thinking_allowed: _,
         thinking_effort: _,
-        speed: _,
     } = request;
 
     let mut input_items = Vec::new();
@@ -1182,11 +1180,8 @@ pub fn count_open_ai_tokens(
             | Model::FiveCodex
             | Model::FiveMini
             | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5.1, 5.2, 5.2-codex, and 5.3-codex don't have dedicated tiktoken support; use gpt-5 tokenizer
-            Model::FivePointOne
-            | Model::FivePointTwo
-            | Model::FivePointTwoCodex
-            | Model::FivePointThreeCodex => {
+            // GPT-5.1, 5.2, and 5.2-codex don't have dedicated tiktoken support; use gpt-5 tokenizer
+            Model::FivePointOne | Model::FivePointTwo | Model::FivePointTwoCodex => {
                 tiktoken_rs::num_tokens_from_messages("gpt-5", &messages)
             }
         }
@@ -1436,7 +1431,6 @@ mod tests {
             temperature: None,
             thinking_allowed: true,
             thinking_effort: None,
-            speed: None,
         };
 
         // Validate that all models are supported by tiktoken-rs
@@ -1568,14 +1562,12 @@ mod tests {
                 name: "get_weather".into(),
                 description: "Fetches the weather".into(),
                 input_schema: json!({ "type": "object" }),
-                use_input_streaming: false,
             }],
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
             thinking_allowed: false,
             thinking_effort: None,
-            speed: None,
         };
 
         let response = into_open_ai_response(

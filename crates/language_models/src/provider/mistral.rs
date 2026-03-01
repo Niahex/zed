@@ -883,7 +883,6 @@ mod tests {
             stop: vec![],
             thinking_allowed: true,
             thinking_effort: None,
-            speed: Default::default(),
         };
 
         let (mistral_request, affinity) =
@@ -920,7 +919,6 @@ mod tests {
             stop: vec![],
             thinking_allowed: true,
             thinking_effort: None,
-            speed: None,
         };
 
         let (mistral_request, _) = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
