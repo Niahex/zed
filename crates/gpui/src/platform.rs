@@ -687,6 +687,19 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn set_margin(&self, _top: i32, _right: i32, _bottom: i32, _left: i32) {}
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn set_exclusive_zone(&self, _zone: i32) {}
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn set_exclusive_edge(&self, _edge: layer_shell::Anchor) {}
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn set_layer(&self, _layer: layer_shell::Layer) {}
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn set_keyboard_interactivity(&self, _interactivity: layer_shell::KeyboardInteractivity) {}
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn set_input_region(&self, _region: Option<Vec<Bounds<Pixels>>>) {}
+
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
     fn play_system_bell(&self) {}

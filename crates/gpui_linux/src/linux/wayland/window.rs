@@ -1480,16 +1480,63 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().renderer.gpu_specs().into()
     }
 
-    fn play_system_bell(&self) {
+    fn set_margin(&self, top: i32, right: i32, bottom: i32, left: i32) {
+        self.with_layer_surface(|layer_surface| {
+            layer_surface.set_margin(top, right, bottom, left);
+        });
+    }
+
+    fn set_exclusive_zone(&self, zone: i32) {
+        self.with_layer_surface(|layer_surface| {
+            layer_surface.set_exclusive_zone(zone);
+        });
+    }
+
+    fn set_exclusive_edge(&self, edge: gpui::layer_shell::Anchor) {
+        self.with_layer_surface(|layer_surface| {
+            layer_surface.set_exclusive_edge(super::layer_shell::wayland_anchor(edge));
+        });
+    }
+
+    fn set_layer(&self, layer: gpui::layer_shell::Layer) {
+        self.with_layer_surface(|layer_surface| {
+            layer_surface.set_layer(super::layer_shell::wayland_layer(layer));
+        });
+    }
+
+    fn set_keyboard_interactivity(&self, interactivity: gpui::layer_shell::KeyboardInteractivity) {
+        self.with_layer_surface(|layer_surface| {
+            layer_surface.set_keyboard_interactivity(
+                super::layer_shell::wayland_keyboard_interactivity(interactivity),
+            );
+        });
+    }
+
+    fn set_input_region(&self, region: Option<Vec<Bounds<Pixels>>>) {
         let state = self.borrow();
-        let surface = if state.surface_state.toplevel().is_some() {
-            Some(&state.surface)
-        } else {
-            None
-        };
-        if let Some(bell) = state.globals.system_bell.as_ref() {
-            bell.ring(surface);
+        if region.is_none() {
+            state.surface.set_input_region(None);
+            return;
         }
+
+        let wl_region = state
+            .globals
+            .compositor
+            .create_region(&state.globals.qh, ());
+
+        if let Some(bounds_vec) = region {
+            for bounds in bounds_vec {
+                wl_region.add(
+                    f32::from(bounds.origin.x) as i32,
+                    f32::from(bounds.origin.y) as i32,
+                    f32::from(bounds.size.width) as i32,
+                    f32::from(bounds.size.height) as i32,
+                );
+            }
+        }
+
+        state.surface.set_input_region(Some(&wl_region));
+        wl_region.destroy();
     }
 }
 
@@ -1552,6 +1599,21 @@ impl WindowDecorationsExt for WindowDecorations {
         match self {
             WindowDecorations::Client => zxdg_toplevel_decoration_v1::Mode::ClientSide,
             WindowDecorations::Server => zxdg_toplevel_decoration_v1::Mode::ServerSide,
+        }
+    }
+}
+
+impl WaylandWindow {
+    fn with_layer_surface<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&zwlr_layer_surface_v1::ZwlrLayerSurfaceV1) -> R,
+    {
+        let state = self.borrow();
+        match &state.surface_state {
+            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface }) => {
+                Some(f(layer_surface))
+            }
+            _ => None,
         }
     }
 }

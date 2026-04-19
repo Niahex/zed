@@ -2110,6 +2110,36 @@ impl Window {
         self.platform_window.is_fullscreen()
     }
 
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_margin(&mut self, top: i32, right: i32, bottom: i32, left: i32) {
+        self.platform_window.set_margin(top, right, bottom, left);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_exclusive_zone(&mut self, zone: i32) {
+        self.platform_window.set_exclusive_zone(zone);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_exclusive_edge(&mut self, edge: crate::layer_shell::Anchor) {
+        self.platform_window.set_exclusive_edge(edge);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_layer(&mut self, layer: crate::layer_shell::Layer) {
+        self.platform_window.set_layer(layer);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_keyboard_interactivity(&mut self, interactivity: crate::layer_shell::KeyboardInteractivity) {
+        self.platform_window.set_keyboard_interactivity(interactivity);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_input_region(&mut self, region: Option<Vec<Bounds<Pixels>>>) {
+        self.platform_window.set_input_region(region);
+    }
+
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {
         self.appearance = self.platform_window.appearance();
 

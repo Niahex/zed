@@ -52,6 +52,17 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
         "Headless" => Rc::new(LinuxPlatform {
             inner: HeadlessClient::new(),
         }),
-        _ => unreachable!(),
+        
+        compositor => {
+            log::warn!(
+                "Unsupported compositor '{}' detected. Available features: wayland={}, x11={}. Falling back to headless mode.",
+                compositor,
+                cfg!(feature = "wayland"),
+                cfg!(feature = "x11")
+            );
+            Rc::new(LinuxPlatform {
+                inner: HeadlessClient::new(),
+            })
+        }
     }
 }
